@@ -1,2 +1,15 @@
-# clara
-Clara Project for Theremin
+# Project Clara - 
+## Team Clara
++ Elisa Andrade
++ Jorge Chong
+
+## Description
+
+
+## Roadmap
+
+## Status
+
+## Source
+
+

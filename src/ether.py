@@ -17,6 +17,8 @@ from FPS import FPS, now
 import threading
 import queue as Queue
 import well_tempered as wtmp
+from pythonosc import udp_client
+
 
 # Credits:
 # Hand Tracking Model from: geax
@@ -81,7 +83,9 @@ PARAMS = {
     'PREVIEW_WIDTH': 576,
     'PREVIEW_HEIGHT': 324,
     'SCREEN_MIN_FREQ': 0.5,
-    'SCREEN_MAX_FREQ': 1
+    'SCREEN_MAX_FREQ': 1,
+    'SC_SERVER': '127.0.0.1',
+    'SC_PORT': 57120
 } 
 
 # def to_planar(arr: np.ndarray, shape: tuple) -> list:
@@ -489,22 +493,26 @@ class Ether:
 # Create Synth in supercollider 
 class EtherSynth:
     def __init__(
-            self
+            self,
+            sc_server,
+            sc_port
         ):
-        
-        # Creates Synth Definition in Supercollider
-
-        # Starts Synth
-        pass
+        self.sc_server = sc_server
+        self.sc_port = sc_port
+        # self._sc_client = udp_client.SimpleUDPClient(self.sc_server, self.sc_port)
 
     def set_tone(self, frequency):
-        print("------> freq: {} <------".format(frequency))
-        pass
+        print("------> theremin freq: {} Hz <------".format(frequency))
+        #sc_client = udp_client.SimpleUDPClient(self.sc_server, self.sc_port)
+        #sc_client.send_message("/freq", frequency)
 
+        
     def set_volume(self, volume):
-        pass
+        print("------> theremin vol: {} <------".format(volume))
+        #sc_client = udp_client.SimpleUDPClient(self.sc_server, self.sc_port)
+        #sc_client.send_message("/amp", volume)
 
-# Process messages from inference (Landmarks)
+# Process messages from inference (specific hand landmarks)
 # and send proper parameters to synthesizer
 class SynthMessageProcessor(threading.Thread):
     def __init__(
@@ -542,7 +550,13 @@ class SynthMessageProcessor(threading.Thread):
 
         # Left Hand: Volume Control
         if message['handedness'] == 'L':
-            print(message)
+            landmarks = message['original_xy']
+            pos = landmarks[PARAMS['LANDMARKS'], 1]
+            mean_pos_y = np.mean(pos)
+            # clip to [0,1]
+            y = np.clip(mean_pos_y, 0, 1)
+            # send to synth
+            self.synth.set_volume(y)
     
     # Run thread
     def run(self):
@@ -556,7 +570,7 @@ class SynthMessageProcessor(threading.Thread):
 if __name__ == "__main__":
     scale = wtmp.WellTempered(octaves=3, start_freq=220)
     # Create Synthesizer
-    synth = EtherSynth()
+    synth = EtherSynth(PARAMS['SC_SERVER'], PARAMS['SC_PORT'])
     # Message Queues
     messages = Queue.Queue()
     # Process Thread
