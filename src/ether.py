@@ -85,7 +85,7 @@ PARAMS = {
     'SCREEN_MIN_FREQ': 0.5,
     'SCREEN_MAX_FREQ': 1,
     'SC_SERVER': '127.0.0.1',
-    'SC_PORT': 57120
+    'SC_PORT': 57121
 } 
 
 # def to_planar(arr: np.ndarray, shape: tuple) -> list:
@@ -261,18 +261,21 @@ class Ether:
         cv2.line(frame, (0, pos[1]), (w, pos[1]), (0,255,0), 1)
 
     # Draw mean line (take the mean of x pos and draw a line)
-    def draw_mean_line(self, frame, region):
-        pos = region.lm_xy[PARAMS['LANDMARKS'], 0]
-        mean_pos_x = int(np.mean(pos))
-        w = self.preview_width
-        cv2.line(frame, (mean_pos_x, 0), (mean_pos_x, w), (0,255,0), 1)
+    def draw_mean_line_r(self, frame, region):
+        if region.handedness >= 0.5:
+            pos = region.lm_xy[PARAMS['LANDMARKS'], 0]
+            mean_pos_x = int(np.mean(pos))
+            w = self.preview_width
+            cv2.line(frame, (mean_pos_x, 0), (mean_pos_x, w), (0,255,0), 1)
 
-    # Draw max line (take the max of x pos and draw a line)
-    def draw_max_line(self, frame, region):
-        pos = region.lm_xy[PARAMS['LANDMARKS'], 0]
-        max_pos_x = int(np.max(pos))
-        w = self.preview_width
-        cv2.line(frame, (max_pos_x, 0), (max_pos_x, w), (0,255,0), 1)
+    # Draw min line (take the min of x pos and draw a line)
+    def draw_min_line_r(self, frame, region):
+        print(region.handedness)
+        if region.handedness >= 0.5:
+            pos = region.lm_xy[PARAMS['LANDMARKS'], 0]
+            min_pos_x = int(np.min(pos))
+            w = self.preview_width
+            cv2.line(frame, (min_pos_x, 0), (min_pos_x, w), (0,255,0), 1)
 
     # Pipeline
     def create_pipeline(self):
@@ -297,8 +300,8 @@ class Ether:
         mono_l.setBoardSocket(dai.CameraBoardSocket.LEFT)
         mono_r.setResolution(PARAMS['MONO_RIGHT_RESOLUTION'])
         mono_r.setBoardSocket(dai.CameraBoardSocket.RIGHT)
-        mono_l.setFps(10)
-        mono_r.setFps(10)
+        #mono_l.setFps(10)
+        #mono_r.setFps(10)
         # Depth and Depth Calculator
         stereo = pipeline.createStereoDepth()
         spatial_calc = pipeline.createSpatialLocationCalculator()
@@ -392,7 +395,6 @@ class Ether:
         pipeline = self.create_pipeline()
         with dai.Device(pipeline) as device:
             print(device.startPipeline())
-            #exit()
             
             # Queues
             # 1. Out: Video output
@@ -415,7 +417,6 @@ class Ether:
             while True:
                 in_video = q_video.get()
                 video_frame = in_video.getCvFrame()
-
 
                 h, w = video_frame.shape[:2]
                 self.frame_size = max(h, w)
@@ -466,17 +467,19 @@ class Ether:
                     if region.lm_score > self.lm_score_threshold:
                         # [0,1] normalization of loandmark points
                         self.lm_transform(region)
-                        # Draw h-v line for wrist point
-                        # self.draw_lines(annotated_frame, region)
                         # self.draw_mean_line(annotated_frame, region)
-                        self.draw_max_line(annotated_frame, region)
+                        self.draw_min_line_r(annotated_frame, region)
 
                         # Post message
                         message = self.xy_message(region)
                         self.queue.put(message)
                         
                 #annotated_frame = annotated_frame[self.pad_h:self.pad_h+h, self.pad_w:self.pad_w+w]
-                cv2.imshow("Landmarks", annotated_frame)
+                # invert
+                inverted_frame = annotated_frame.copy()
+                inverted_frame = cv2.flip(inverted_frame, 1)
+                # show
+                cv2.imshow("Landmarks", inverted_frame)
                 key = cv2.waitKey(1) 
                 if key == ord('q') or key == 27:
                     message = self.stop_message()
@@ -499,18 +502,19 @@ class EtherSynth:
         ):
         self.sc_server = sc_server
         self.sc_port = sc_port
+        print("> Initializing SC at {}:{} <".format(self.sc_server, self.sc_port))
         # self._sc_client = udp_client.SimpleUDPClient(self.sc_server, self.sc_port)
 
     def set_tone(self, frequency):
         print("------> theremin freq: {} Hz <------".format(frequency))
-        #sc_client = udp_client.SimpleUDPClient(self.sc_server, self.sc_port)
-        #sc_client.send_message("/freq", frequency)
+        sc_client = udp_client.SimpleUDPClient(self.sc_server, self.sc_port)
+        sc_client.send_message("/main/f", frequency)
 
         
     def set_volume(self, volume):
         print("------> theremin vol: {} <------".format(volume))
-        #sc_client = udp_client.SimpleUDPClient(self.sc_server, self.sc_port)
-        #sc_client.send_message("/amp", volume)
+        sc_client = udp_client.SimpleUDPClient(self.sc_server, self.sc_port)
+        sc_client.send_message("/main/a", volume)
 
 # Process messages from inference (specific hand landmarks)
 # and send proper parameters to synthesizer
@@ -534,25 +538,31 @@ class SynthMessageProcessor(threading.Thread):
 
     # Process a Hand Landmark Message
     def process(self, message):        
-        global wt
+        landmarks = 1.0 - message['original_xy']
+        # print(landmarks)
+        pos = landmarks[PARAMS['LANDMARKS'], 0]
+        mean_pos_x = np.mean(pos)
+        max_pos_x = np.max(pos)
+
+
         # Rigth Hand: Tone Control
         if message['handedness'] == 'R':
-            landmarks = message['original_xy']
-            pos = landmarks[PARAMS['LANDMARKS'], 0]
-            max_pos_x = np.max(pos)
-            # clip and rescale to [0,1]
-            tmp_x = np.clip(max_pos_x, self.screen_min_freq, self.screen_max_freq)
-            x = (tmp_x - self.screen_min_freq) / (self.screen_max_freq - self.screen_min_freq)
-            # convert freq
-            freq = self.scale.from_0_1_to_f(x)          
-            # send to synth
-            self.synth.set_tone(freq)
+            if max_pos_x >= self.screen_min_freq:
+                # clip and rescale to [0,1]
+
+                tmp_x = np.clip(max_pos_x, self.screen_min_freq, self.screen_max_freq)
+                # tmp_x = np.clip(mean_pos_x, self.screen_min_freq, self.screen_max_freq)
+                x = (tmp_x - self.screen_min_freq) / (self.screen_max_freq - self.screen_min_freq)
+                # convert freq
+                freq = self.scale.from_0_1_to_f(x)          
+                # send to synth
+                self.synth.set_tone(freq)
 
         # Left Hand: Volume Control
-        if message['handedness'] == 'L':
-            landmarks = message['original_xy']
-            pos = landmarks[PARAMS['LANDMARKS'], 1]
-            mean_pos_y = np.mean(pos)
+        # a little bit of a hack due to 
+        if message['handedness'] == 'L' or max_pos_x < self.screen_min_freq:
+            pos_y = landmarks[PARAMS['LANDMARKS'], 1]
+            mean_pos_y = np.mean(pos_y)
             # clip to [0,1]
             y = np.clip(mean_pos_y, 0, 1)
             # send to synth
@@ -564,11 +574,12 @@ class SynthMessageProcessor(threading.Thread):
             message = self.queue.get()
             if 'STOP' in message:
                 self.active = False
-            # Process
-            self.process(message)
+            else:
+                # Process
+                self.process(message)
 
 if __name__ == "__main__":
-    scale = wtmp.WellTempered(octaves=3, start_freq=220)
+    scale = wtmp.WellTempered(octaves=4, start_freq=220, size=10000)
     # Create Synthesizer
     synth = EtherSynth(PARAMS['SC_SERVER'], PARAMS['SC_PORT'])
     # Message Queues

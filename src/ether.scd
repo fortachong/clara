@@ -1,10 +1,12 @@
+// Server.killAll;
 // Start Server
 s.boot;
+NetAddr.langPort;
 
 // Theremin Model I
 (
 SynthDef.new(\ether, {
-	arg frequency=440, amplitude=0.01;
+	arg frequency=440, amplitude=0.0;
 
 	var f0, f1, signal;
 	f0 = 50000;
@@ -21,19 +23,31 @@ SynthDef.new(\ether, {
 // Instantiate
 y = Synth.new(\ether);
 // OSC Frequency control
-f = OSCFunc({ | msg, time, addr, port |
-	var pyFreq;
+OSCdef.new(
+	\freq,
+	{
+		arg msg, time, addr, port;
+		var pyFreq;
+		[msg, time, addr, port].postln;
+		pyFreq = msg[1].asFloat;
+		( "freq is " + pyFreq ).postln;
+		y.set( \frequency, pyFreq);
+	},
+	'/main/f'
+);
 
-	pyFreq = msg[1].asFloat;
-	( "freq is " + pyFreq ).postln;
-	y.set( \frequency, pyFreq);
-}, '/freq');
 // OSC Amplitude control
-a = OSCFunc( { | msg, time, addr, port |
-	var pyAmp;
+OSCdef.new(
+	\amp,
+	{
+		arg msg, time, addr, port;
+		var pyAmp;
+		[msg, time, addr, port].postln;
+		pyAmp = msg[1].asFloat;
+		( "amp is " + pyAmp ).postln;
+		y.set( \amplitude, pyAmp);
+	},
+	'/main/a'
+);
 
-	pyAmp = msg[1].asFloat;
-	( "amp is " + pyAmp ).postln;
-	y.set( \amplitude, pyAmp );
-}, '/amp');
 );
