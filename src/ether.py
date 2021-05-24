@@ -18,6 +18,7 @@ import threading
 import queue as Queue
 import well_tempered as wtmp
 from pythonosc import udp_client
+import argparse
 
 
 # Credits:
@@ -200,6 +201,10 @@ class Ether:
         
         region.lm_xy = lm_xy    
         region.lm_xy_normalized = lm_xy_normal
+        # y rescaled
+        lm_xy_y_rescaled = lm_xy_normal.copy()
+        lm_xy_y_rescaled[:, 1] = (lm_xy_y_rescaled[:, 1] - self.pad_h / self.frame_size) * (self.frame_size/self.preview_height)
+        region.lm_xy_y_rescaled = lm_xy_y_rescaled
 
     # Render Landmarks
     def lm_render(self, frame, region):
@@ -224,7 +229,7 @@ class Ether:
                 cv2.polylines(frame, lines, False, (255, 0, 0), 2, cv2.LINE_AA)
                 for x,y in lm_xy:
                     # print(x,y)
-                    cv2.circle(frame, (x, y), 6, (0,128,255), -1)
+                    cv2.circle(frame, (x, y), 3, (0,128,255), -1)
 
     # Transform the normalized x, y and form a message to send
     # to a queue for further processing (interaction)
@@ -242,6 +247,7 @@ class Ether:
         message = {
             'handedness': handedness,
             'original_xy': region.lm_xy_normalized,
+            'original_xy_y_rescaled': region.lm_xy_y_rescaled,
             'xy': pts
         }
         return message
@@ -270,7 +276,7 @@ class Ether:
 
     # Draw min line (take the min of x pos and draw a line)
     def draw_min_line_r(self, frame, region):
-        print(region.handedness)
+        # print(region.handedness)
         if region.handedness >= 0.5:
             pos = region.lm_xy[PARAMS['LANDMARKS'], 0]
             min_pos_x = int(np.min(pos))
@@ -418,11 +424,14 @@ class Ether:
                 in_video = q_video.get()
                 video_frame = in_video.getCvFrame()
 
+                # Dimensions of the Video Frame
                 h, w = video_frame.shape[:2]
-                self.frame_size = max(h, w)
-                
-                self.pad_h = int((self.frame_size - h)/2)
-                self.pad_w = int((self.frame_size - w)/2)
+                self.h = h
+                self.w = w
+                # Padding top and bottom
+                self.frame_size = max(self.h, self.w)
+                self.pad_h = int((self.frame_size - self.h)/2)
+                self.pad_w = int((self.frame_size - self.w)/2)
 
                 video_frame = cv2.copyMakeBorder(
                     video_frame, 
@@ -446,7 +455,7 @@ class Ether:
                 self.pd_postprocess(inference)
 
                 # Data for landmarks
-                for idx, region in enumerate(self.regions):
+                for region in self.regions:
                     img_hand = mpu.warp_rect_img(
                         region.rect_points, 
                         video_frame, 
@@ -458,7 +467,7 @@ class Ether:
                     q_lm_in.send(nn_data)
 
                 # Retrieve Landmarks
-                for idx, region in enumerate(self.regions):
+                for region in self.regions:
                     inference = q_lm_out.get()
                     self.lm_postprocess(region, inference)
                     self.lm_render(annotated_frame, region)
@@ -502,9 +511,8 @@ class EtherSynth:
         ):
         self.sc_server = sc_server
         self.sc_port = sc_port
-        print("> Initializing SC at {}:{} <".format(self.sc_server, self.sc_port))
-        # self._sc_client = udp_client.SimpleUDPClient(self.sc_server, self.sc_port)
-
+        print("> Initializing SC Client at {}:{} <".format(self.sc_server, self.sc_port))
+        
     def set_tone(self, frequency):
         print("------> theremin freq: {} Hz <------".format(frequency))
         sc_client = udp_client.SimpleUDPClient(self.sc_server, self.sc_port)
@@ -536,20 +544,21 @@ class SynthMessageProcessor(threading.Thread):
         # Scale
         self.scale = scale
 
+        # Vol
+        self.volume = 0
+
     # Process a Hand Landmark Message
     def process(self, message):        
         landmarks = 1.0 - message['original_xy']
         # print(landmarks)
         pos = landmarks[PARAMS['LANDMARKS'], 0]
-        mean_pos_x = np.mean(pos)
+        # mean_pos_x = np.mean(pos)
         max_pos_x = np.max(pos)
-
 
         # Rigth Hand: Tone Control
         if message['handedness'] == 'R':
             if max_pos_x >= self.screen_min_freq:
                 # clip and rescale to [0,1]
-
                 tmp_x = np.clip(max_pos_x, self.screen_min_freq, self.screen_max_freq)
                 # tmp_x = np.clip(mean_pos_x, self.screen_min_freq, self.screen_max_freq)
                 x = (tmp_x - self.screen_min_freq) / (self.screen_max_freq - self.screen_min_freq)
@@ -559,12 +568,24 @@ class SynthMessageProcessor(threading.Thread):
                 self.synth.set_tone(freq)
 
         # Left Hand: Volume Control
-        # a little bit of a hack due to 
-        if message['handedness'] == 'L' or max_pos_x < self.screen_min_freq:
-            pos_y = landmarks[PARAMS['LANDMARKS'], 1]
-            mean_pos_y = np.mean(pos_y)
+        if message['handedness'] == 'L':
+            lm_l = 1.0 - message['original_xy_y_rescaled']
+            # print(lm_l)
+            pos_y = lm_l[PARAMS['LANDMARKS'], 1]
+            min_pos_y = np.min(pos_y)
+            max_pos_y = np.max(pos_y)
+            if max_pos_y > self.volume:
+                self.volume = max_pos_y
+            else:
+                self.volume = min_pos_y
             # clip to [0,1]
-            y = np.clip(mean_pos_y, 0, 1)
+            y = np.clip(self.volume, 0, 1)
+
+            if y > 0.8:
+                y = 1
+            if y < 0.2:
+                y = 0
+
             # send to synth
             self.synth.set_volume(y)
     
@@ -579,9 +600,16 @@ class SynthMessageProcessor(threading.Thread):
                 self.process(message)
 
 if __name__ == "__main__":
-    scale = wtmp.WellTempered(octaves=4, start_freq=220, size=10000)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--scserver', default="{}".format(PARAMS['SC_SERVER']), type=str, 
+                        help="IP Address of Supercollider Server")
+    parser.add_argument("--scport", default=PARAMS['SC_PORT'], type=int,
+                        help="Port of Supercollider Server")
+    args = parser.parse_args()
+
+    scale = wtmp.WellTempered(octaves=3, start_freq=440, resolution=10000)
     # Create Synthesizer
-    synth = EtherSynth(PARAMS['SC_SERVER'], PARAMS['SC_PORT'])
+    synth = EtherSynth(args.scserver, args.scport)
     # Message Queues
     messages = Queue.Queue()
     # Process Thread

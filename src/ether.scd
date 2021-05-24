@@ -6,14 +6,16 @@ NetAddr.langPort;
 // Theremin Model I
 (
 SynthDef.new(\ether, {
-	arg frequency=440, amplitude=0.0;
+	arg frequency=440, amplitude=0;
 
-	var f0, f1, signal;
+	var f0, f1, signal, max_amplitude;
+	max_amplitude = 0.5;
 	f0 = 50000;
 	f1 = f0 + frequency;
 	signal = BPF.ar(
 		SinOsc.ar(f0) * SinOsc.ar(f1), abs(f1-f0), 0.2
-	) * amplitude;
+	) * amplitude * max_amplitude;
+	signal.scope;
 	Out.ar(0, signal);
 	Out.ar(1, signal);
 }).add;
@@ -22,6 +24,7 @@ SynthDef.new(\ether, {
 (
 // Instantiate
 y = Synth.new(\ether);
+FreqScope.new(server: s);
 // OSC Frequency control
 OSCdef.new(
 	\freq,
