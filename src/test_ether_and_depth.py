@@ -7,6 +7,7 @@
 # Currently: we are having problems creating more input/output nodes
 # So for the moment depth is not used but we experimented with it
 
+from os import X_OK
 import cv2
 import depthai as dai
 import numpy as np
@@ -105,15 +106,29 @@ class Ether:
         lm_path=PARAMS['LM_DETECTION_MODEL_PATH'],
         lm_score_threshold=0.5
     ):
+        # landmark kernel sizes
+        self.kernel = 7
+
+        # 
+        self.the_1080_w = 1920
+        self.the_1080_h = 1080
+        # For cropping of depth
+        self.dx = self.the_1080_h / self.the_1080_w
+        self.offset_x = ((self.the_1080_w - self.the_1080_h) / 2) / self.the_1080_w
+        # Message queue
         self.queue = queue
+        # Palm detector
         self.pd_path = pd_path
         self.pd_score_thresh = pd_score_thresh
         self.pd_nms_thresh = pd_nms_thresh
+        # Landmark detector
         self.lm_path = lm_path
         self.lm_score_threshold = lm_score_threshold
             
         self.show_landmarks = True
         self.show_handedness = False
+        # For debugging
+        self.show_depth_map = True
 
         # Create SSD anchors 
         # https://github.com/google/mediapipe/blob/master/mediapipe/modules/palm_detection/palm_detection_cpu.pbtxt
@@ -201,10 +216,6 @@ class Ether:
         
         region.lm_xy = lm_xy    
         region.lm_xy_normalized = lm_xy_normal
-        # y rescaled
-        lm_xy_y_rescaled = lm_xy_normal.copy()
-        lm_xy_y_rescaled[:, 1] = (lm_xy_y_rescaled[:, 1] - self.pad_h / self.frame_size) * (self.frame_size/self.preview_height)
-        region.lm_xy_y_rescaled = lm_xy_y_rescaled
 
     # Render Landmarks
     def lm_render(self, frame, region):
@@ -247,7 +258,6 @@ class Ether:
         message = {
             'handedness': handedness,
             'original_xy': region.lm_xy_normalized,
-            'original_xy_y_rescaled': region.lm_xy_y_rescaled,
             'xy': pts
         }
         return message
@@ -262,7 +272,7 @@ class Ether:
     # Draw lines
     def draw_lines(self, frame, region):
         pos = region.lm_xy[0, :]
-        w = self.preview_width
+        w = frame.shape[0]
         cv2.line(frame, (pos[0], 0), (pos[0], w), (0,255,0), 1)
         cv2.line(frame, (0, pos[1]), (w, pos[1]), (0,255,0), 1)
 
@@ -271,18 +281,45 @@ class Ether:
         if region.handedness >= 0.5:
             pos = region.lm_xy[PARAMS['LANDMARKS'], 0]
             mean_pos_x = int(np.mean(pos))
-            w = self.preview_width
+            w = frame.shape[0]
             cv2.line(frame, (mean_pos_x, 0), (mean_pos_x, w), (0,255,0), 1)
 
     # Draw min line (take the min of x pos and draw a line)
     def draw_min_line_r(self, frame, region):
         # print(region.handedness)
         if region.handedness >= 0.5:
-            # pos = region.lm_xy[PARAMS['LANDMARKS'], 0]
-            pos = region.lm_xy[:, 0]
+            pos = region.lm_xy[PARAMS['LANDMARKS'], 0]
             min_pos_x = int(np.min(pos))
-            w = self.preview_width
+            w = frame.shape[0]
             cv2.line(frame, (min_pos_x, 0), (min_pos_x, w), (0,255,0), 1)
+
+    # Normalize depth map
+
+    # Draw Body center
+
+    # Process depth
+    def process_depth(self, depth_map, region):
+        print(region.lm_xy_normalized)
+        dm_h, dm_w = depth_map.shape
+        dm = (region.lm_xy_normalized * np.array([dm_w, dm_h])).astype(int)
+        centers_x = np.clip(dm[:,1], 0, dm_w-1)
+        centers_y = np.clip(dm[:,0], 0, dm_h-1)
+        lim_inf_x = np.clip(centers_x - self.kernel//2, 0, dm_w-1)
+        lim_sup_x = np.clip(centers_x + self.kernel//2, 0 , dm_w-1)
+        lim_inf_y = np.clip(centers_y - self.kernel//2, 0, dm_h-1)
+        lim_sup_y = np.clip(centers_y + self.kernel//2, 0, dm_h-1)
+
+        depth_centers = depth_map[centers_y, centers_x]
+        depth_avgs = []
+        for lix, lsx, liy, lsy in zip(lim_inf_x, lim_sup_x, lim_inf_y, lim_sup_y):
+            depth_avgs.append(np.ravel(depth_map[liy:lsy, lix:lsx].mean()))
+ 
+        print(dm)
+        print(depth_centers)
+        print(depth_avgs)
+        
+
+        
 
     # Pipeline
     def create_pipeline(self):
@@ -292,8 +329,6 @@ class Ether:
         )
         # Pipeline
         pipeline = dai.Pipeline()
-        # pipeline.setOpenVINOVersion(version = dai.OpenVINO.Version.VERSION_2021_2)
-        
         print("[{}]: Setting up Depth...".format(
             datetime.now().strftime("%d/%m/%Y %H:%M:%S")
             )
@@ -307,19 +342,13 @@ class Ether:
         mono_l.setBoardSocket(dai.CameraBoardSocket.LEFT)
         mono_r.setResolution(PARAMS['MONO_RIGHT_RESOLUTION'])
         mono_r.setBoardSocket(dai.CameraBoardSocket.RIGHT)
-        #mono_l.setFps(10)
-        #mono_r.setFps(10)
+        mono_l.setFps(10)
+        mono_r.setFps(10)
         # Depth and Depth Calculator
         stereo = pipeline.createStereoDepth()
-        spatial_calc = pipeline.createSpatialLocationCalculator()
-        # Depth / Calculator / Config / Outputs and Inputs
-        # xout_depth = pipeline.createXLinkOut()
-        xout_spatial_data = pipeline.createXLinkOut()
-        xin_spatial_calc_config = pipeline.createXLinkIn()
+        xout_depth = pipeline.createXLinkOut()
         # Stream Names
-        # xout_depth.setStreamName("depth")
-        xout_spatial_data.setStreamName("spatial")
-        xin_spatial_calc_config.setStreamName("spatial_calc_config")
+        xout_depth.setStreamName("depth")
         # Stereo Depth parameters
         output_depth = True
         output_rectified = False
@@ -334,33 +363,27 @@ class Ether:
         mono_l.out.link(stereo.left)
         mono_r.out.link(stereo.right)
         # Passtrough Stereo -> Stereo Calc -> Output Depth
-        # spatial_calc.passthroughDepth.link(xout_depth.input)
-        # Stereo Depth -> Stereo Calc
-        stereo.depth.link(spatial_calc.inputDepth)
-        # Configure the initial ROI (Body center) for Spatial Calc
-        spatial_calc.setWaitForConfigInput(False)
-        first_config = dai.SpatialLocationCalculatorConfigData()
-        first_config.depthThresholds.lowerThreshold = PARAMS['ROI_DP_LOWER_TH']
-        first_config.depthThresholds.upperThreshold = PARAMS['ROI_DP_UPPER_TH'] 
-        first_config.roi = dai.Rect(PARAMS['INITIAL_ROI_TL'], PARAMS['INITIAL_ROI_BR'])
-        spatial_calc.initialConfig.addROI(first_config)
-        # # Spatial Calc -> Out spatial
-        # spatial_calc.out.link(xout_spatial_data.input)
-        # In spatial_calc_config -> Spatial Calc Config
-        # # xin_spatial_calc_config.out.link(spatial_calc.inputConfig)
-
+        # Stereo Depth -> Out
+        stereo.depth.link(xout_depth.input)
         # Color Camera
         print("[{}]: Color Camera...".format(
             datetime.now().strftime("%d/%m/%Y %H:%M:%S")
             )
         )
         cam = pipeline.createColorCamera()
-        cam.setPreviewSize(self.preview_width, self.preview_height)
+        cam.setPreviewSize(self.pd_input_length, self.pd_input_length)
+        cam.setResolution(PARAMS['VIDEO_RESOLUTION'])
+        # Crop video to square shape (palm detection takes square image as input)
+        self.frame_size = min(cam.getVideoSize())
+        cam.setVideoSize(self.frame_size, self.frame_size)
+        cam.setFps(30)
         cam.setInterleaved(False)
         cam.setBoardSocket(dai.CameraBoardSocket.RGB)
+
+        # Video output
         cam_out = pipeline.createXLinkOut()
         cam_out.setStreamName("cam_out")
-        cam.preview.link(cam_out.input)
+        cam.video.link(cam_out.input)
 
         # Palm Detector
         print("[{}]: Mediapipe Palm Detector NN...".format(
@@ -368,11 +391,12 @@ class Ether:
             )
         )
         pd_nn = pipeline.createNeuralNetwork()
+        pd_nn.input.setQueueSize(1)
+        pd_nn.input.setBlocking(False)
         pd_nn.setBlobPath(str(Path(self.pd_path).resolve().absolute()))
         pd_nn.setNumInferenceThreads(2)
-        pd_in = pipeline.createXLinkIn()
-        pd_in.setStreamName("pd_in")
-        pd_in.out.link(pd_nn.input)
+        # cam -> pd_in
+        cam.preview.link(pd_nn.input)
         pd_out = pipeline.createXLinkOut()
         pd_out.setStreamName("pd_out")
         pd_nn.out.link(pd_out.input)
@@ -402,58 +426,46 @@ class Ether:
         pipeline = self.create_pipeline()
         with dai.Device(pipeline) as device:
             print(device.startPipeline())
+            # exit()
             
             # Queues
             # 1. Out: Video output
             q_video = device.getOutputQueue(name="cam_out", maxSize=1, blocking=False)
-            # 2. In: Palm Detector Input
-            q_pd_in = device.getInputQueue(name="pd_in")
-            # 3. Out: Palm Detector Output
+            # 2. Out: Palm Detector Output
             q_pd_out = device.getOutputQueue(name="pd_out", maxSize=4, blocking=False)
             # 4. Landmarks Out
             q_lm_out = device.getOutputQueue(name="lm_out", maxSize=4, blocking=False)
             # 5. Landmarks In
             q_lm_in = device.getInputQueue(name="lm_in")
             # 6. Out: Depth
-            #q_d = device.getOutputQueue(name="depth", maxSize=4, blocking=False)
-            # 7. Out: Spatial Avg Estimation (Calculator)
-            #q_spatial = device.getOutputQueue(name="spatial", maxSize=4, blocking=False)
-            # 8. In: Config for Spatial Calculator
-            #q_spatial_config = device.getInputQueue("spatial_calc_config")
-
+            q_d = device.getOutputQueue(name="depth", maxSize=4, blocking=False)
+            
             while True:
                 in_video = q_video.get()
                 video_frame = in_video.getCvFrame()
-
-                # Dimensions of the Video Frame
-                h, w = video_frame.shape[:2]
-                self.h = h
-                self.w = w
-                # Padding top and bottom
-                self.frame_size = max(self.h, self.w)
-                self.pad_h = int((self.frame_size - self.h)/2)
-                self.pad_w = int((self.frame_size - self.w)/2)
-
-                video_frame = cv2.copyMakeBorder(
-                    video_frame, 
-                    self.pad_h, 
-                    self.pad_h, 
-                    self.pad_w, 
-                    self.pad_w, 
-                    cv2.BORDER_CONSTANT
-                )
-                
-                frame_nn = dai.ImgFrame()
-                frame_nn.setWidth(self.pd_input_length)
-                frame_nn.setHeight(self.pd_input_length)
-                frame_nn.setData(to_planar(video_frame, (self.pd_input_length, self.pd_input_length)))
-                q_pd_in.send(frame_nn)
-
                 annotated_frame = video_frame.copy()
+                # resize
 
-                # Get palm detection
+                # Depth
+                in_depth = q_d.get()
+                depth_frame = in_depth.getFrame()
+                df_h, df_w = depth_frame.shape
+                dframe = depth_frame.copy()
+                dframe = dframe[:,int((df_w - df_h)/2):int((df_w - df_h)/2) + df_h]
+
+                
+                # print(depth_frame.shape)
+                # (800, 1280)
+                
+                # Normalize depth map
+                depth_frame_color = cv2.normalize(dframe, None, 255, 0, cv2.NORM_INF, cv2.CV_8UC1)
+                depth_frame_color = cv2.equalizeHist(depth_frame_color)
+                depth_frame_color = cv2.applyColorMap(depth_frame_color, cv2.COLORMAP_HOT)
+                             
+                # Palm Detection
                 inference = q_pd_out.get()
                 self.pd_postprocess(inference)
+                # self.pd_render(annotated_frame)
 
                 # Data for landmarks
                 for region in self.regions:
@@ -464,7 +476,10 @@ class Ether:
                         self.lm_input_length
                     )
                     nn_data = dai.NNData()
-                    nn_data.setLayer("input_1", to_planar(img_hand, (self.lm_input_length, self.lm_input_length)))
+                    nn_data.setLayer(
+                        "input_1", 
+                        to_planar(img_hand, (self.lm_input_length, self.lm_input_length))
+                    )
                     q_lm_in.send(nn_data)
 
                 # Retrieve Landmarks
@@ -482,18 +497,23 @@ class Ether:
 
                         # Post message
                         message = self.xy_message(region)
-                        self.queue.put(message)
-                        
-                #annotated_frame = annotated_frame[self.pad_h:self.pad_h+h, self.pad_w:self.pad_w+w]
+                        # self.queue.put(message)
+
+                        # Retrieve depth values
+                        self.process_depth(dframe, region)
+
                 # invert
                 inverted_frame = annotated_frame.copy()
                 inverted_frame = cv2.flip(inverted_frame, 1)
+
                 # show
                 cv2.imshow("Landmarks", inverted_frame)
+                cv2.imshow("Depth", depth_frame_color)
+
                 key = cv2.waitKey(1) 
                 if key == ord('q') or key == 27:
                     message = self.stop_message()
-                    self.queue.put(message)
+                    # self.queue.put(message)
 
                     break
                 elif key == 32:
@@ -516,14 +536,14 @@ class EtherSynth:
         
     def set_tone(self, frequency):
         print("------> theremin freq: {} Hz <------".format(frequency))
-        sc_client = udp_client.SimpleUDPClient(self.sc_server, self.sc_port)
-        sc_client.send_message("/main/f", frequency)
+        #sc_client = udp_client.SimpleUDPClient(self.sc_server, self.sc_port)
+        #sc_client.send_message("/main/f", frequency)
 
         
     def set_volume(self, volume):
         print("------> theremin vol: {} <------".format(volume))
-        sc_client = udp_client.SimpleUDPClient(self.sc_server, self.sc_port)
-        sc_client.send_message("/main/a", volume)
+        #sc_client = udp_client.SimpleUDPClient(self.sc_server, self.sc_port)
+        #sc_client.send_message("/main/a", volume)
 
 # Process messages from inference (specific hand landmarks)
 # and send proper parameters to synthesizer
@@ -552,8 +572,7 @@ class SynthMessageProcessor(threading.Thread):
     def process(self, message):        
         landmarks = 1.0 - message['original_xy']
         # print(landmarks)
-        # pos = landmarks[PARAMS['LANDMARKS'], 0]
-        pos = landmarks[:, 0]
+        pos = landmarks[PARAMS['LANDMARKS'], 0]
         # mean_pos_x = np.mean(pos)
         max_pos_x = np.max(pos)
 
@@ -571,7 +590,7 @@ class SynthMessageProcessor(threading.Thread):
 
         # Left Hand: Volume Control
         if message['handedness'] == 'L':
-            lm_l = 1.0 - message['original_xy_y_rescaled']
+            lm_l = 1.0 - message['original_xy']
             # print(lm_l)
             pos_y = lm_l[PARAMS['LANDMARKS'], 1]
             min_pos_y = np.min(pos_y)
@@ -613,10 +632,11 @@ if __name__ == "__main__":
     # Create Synthesizer
     synth = EtherSynth(args.scserver, args.scport)
     # Message Queues
-    messages = Queue.Queue()
+    #messages = Queue.Queue()
     # Process Thread
-    smp = SynthMessageProcessor(messages, synth, scale)
-    smp.start()
+    #smp = SynthMessageProcessor(messages, synth, scale)
+    #smp.start()
     # OAKD inference processor
+    messages = None
     there = Ether(messages)
     there.run() 
