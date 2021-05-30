@@ -299,27 +299,39 @@ class Ether:
 
     # Process depth
     def process_depth(self, depth_map, region):
-        print(region.lm_xy_normalized)
+        # print(region.lm_xy_normalized)
+        mask = np.zeros(depth_map.shape)
         dm_h, dm_w = depth_map.shape
         dm = (region.lm_xy_normalized * np.array([dm_w, dm_h])).astype(int)
-        centers_x = np.clip(dm[:,1], 0, dm_w-1)
-        centers_y = np.clip(dm[:,0], 0, dm_h-1)
+        centers_x = np.clip(dm[:,0], 0, dm_w-1)
+        centers_y = np.clip(dm[:,1], 0, dm_h-1)
         lim_inf_x = np.clip(centers_x - self.kernel//2, 0, dm_w-1)
         lim_sup_x = np.clip(centers_x + self.kernel//2, 0 , dm_w-1)
         lim_inf_y = np.clip(centers_y - self.kernel//2, 0, dm_h-1)
         lim_sup_y = np.clip(centers_y + self.kernel//2, 0, dm_h-1)
 
-        depth_centers = depth_map[centers_y, centers_x]
+        depth_center_values = depth_map[centers_y, centers_x]
         depth_avgs = []
         for lix, lsx, liy, lsy in zip(lim_inf_x, lim_sup_x, lim_inf_y, lim_sup_y):
-            depth_avgs.append(np.ravel(depth_map[liy:lsy, lix:lsx].mean()))
+            depth_avgs.append(np.ravel(depth_map[liy:lsy, lix:lsx]).mean())
  
         print(dm)
-        print(depth_centers)
+        print(depth_center_values)
         print(depth_avgs)
-        
+        region.depth_centers = dm
+        region.depth_center_values = depth_center_values
+        region.lim_inf_x = lim_inf_x
+        region.lim_sup_x = lim_sup_x
+        region.lim_inf_y = lim_inf_y
+        region.lim_sup_y = lim_sup_y
+        region.depth_avgs = depth_avgs
 
-        
+
+    # Mask to verify depth
+    def get_updated_mask(self, mask, region):
+        for lix, lsx, liy, lsy in zip(region.lim_inf_x, region.lim_sup_x, region.lim_inf_y, region.lim_sup_y):
+            mask[liy:lsy, lix:lsx] = 1
+        return mask
 
     # Pipeline
     def create_pipeline(self):
@@ -452,7 +464,7 @@ class Ether:
                 df_h, df_w = depth_frame.shape
                 dframe = depth_frame.copy()
                 dframe = dframe[:,int((df_w - df_h)/2):int((df_w - df_h)/2) + df_h]
-
+                mask = np.zeros(dframe.shape)
                 
                 # print(depth_frame.shape)
                 # (800, 1280)
@@ -501,6 +513,9 @@ class Ether:
 
                         # Retrieve depth values
                         self.process_depth(dframe, region)
+                        self.get_updated_mask(mask, region)
+                        
+                        
 
                 # invert
                 inverted_frame = annotated_frame.copy()
@@ -509,6 +524,7 @@ class Ether:
                 # show
                 cv2.imshow("Landmarks", inverted_frame)
                 cv2.imshow("Depth", depth_frame_color)
+                cv2.imshow("Mask", mask)
 
                 key = cv2.waitKey(1) 
                 if key == ord('q') or key == 27:
