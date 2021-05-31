@@ -16,12 +16,13 @@ The project has 4 subsystems that use computer vision models:
 + Calibration: Body and Theremin location.
 + Assisted Practicing System.
 
+This is a work in progress project.
 ---
 ## Roadmap
 
 ### 1. Theremin Simulator
 
-The simulator is a proof of a concept in order to test the capabilities of the OAKD in terms of inference using deep learning models. For example we used the implementation by [https://github.com/geaxgx/depthai_hand_tracker](Geax) of the Mediapipe Hands model for hand tracking. 
+The simulator is a proof of a concept in order to test the capabilities of the OAKD in terms of inference using deep learning models. For example we used the implementation by [Geax Hand Tracking](https://github.com/geaxgx/depthai_hand_tracker) of the Mediapipe Hands model for hand tracking. 
 
 ### 2. Calibration: Tone Function
 
@@ -33,18 +34,20 @@ A second calibration procedure is necessary for establishing an anchoring of the
 
 ### 4. Assisted Practicing System
 
-This would be a system that provides hints where to place hands and finger configuration in order to play the next note. Similar to systems like [https://synthesiagame.com/](Synthesia) for the piano.
+This would be a system that provides hints where to place hands and finger configuration in order to play the next note. Similar to systems like [Synthesia](https://synthesiagame.com/) for the piano.
 
 ---
 ## Status
 Due to some logistic problems (we haven't gotten a Theremin yet), we have manage to use the OAKD device for input as a hand tracking device and we have implemented the Theremin Simulator. This exercise was necessary in order to test and realize the difficulties we were going to have. 
 
+We have problems integrating depth with the hand tracking models. In the theremin simulator we use 2 XLinkIn nodes and 3 XLinkOut nodes as in ```ether.py```. If we add more nodes it crashes. The original idea was to use depth estimation to locate hand and antenna positions. Some experiments are done in ```test_ether_and_depth.py```, but it is incomplete at the moment.
+
 ---
 ## Source Code
 ### Requirements
 
-+ Depthai [https://luxonis.com/depthai](https://luxonis.com/depthai)
-+ Python OSC Library [https://pypi.org/project/python-osc/](https://pypi.org/project/python-osc/)
++ Depthai (https://luxonis.com/depthai)[https://luxonis.com/depthai]
++ Python OSC Library (https://pypi.org/project/python-osc/)[https://pypi.org/project/python-osc/]
 + Supercollider 
 
 ### 1. Theremin Simulator
@@ -57,4 +60,5 @@ Start ```ether.py``` with these parameters:
 ```sh
 ether.py --scserver [IPADDRESS] --scport [PORT]
 ```
+
 
