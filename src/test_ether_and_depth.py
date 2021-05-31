@@ -115,6 +115,8 @@ class Ether:
         # For cropping of depth
         self.dx = self.the_1080_h / self.the_1080_w
         self.offset_x = ((self.the_1080_w - self.the_1080_h) / 2) / self.the_1080_w
+        # Focal Length
+        self.focal_length = 860
         # Message queue
         self.queue = queue
         # Palm detector
@@ -300,7 +302,6 @@ class Ether:
     # Process depth
     def process_depth(self, depth_map, region):
         # print(region.lm_xy_normalized)
-        mask = np.zeros(depth_map.shape)
         dm_h, dm_w = depth_map.shape
         dm = (region.lm_xy_normalized * np.array([dm_w, dm_h])).astype(int)
         centers_x = np.clip(dm[:,0], 0, dm_w-1)
@@ -314,10 +315,20 @@ class Ether:
         depth_avgs = []
         for lix, lsx, liy, lsy in zip(lim_inf_x, lim_sup_x, lim_inf_y, lim_sup_y):
             depth_avgs.append(np.ravel(depth_map[liy:lsy, lix:lsx]).mean())
- 
-        print(dm)
-        print(depth_center_values)
-        print(depth_avgs)
+
+        xyz = []
+        for idx, d in enumerate(depth_avgs):
+            pixel_x = region.lm_xy[idx][0]
+            pixel_y = region.lm_xy[idx][1]
+            x = ((pixel_x - self.frame_center_x) * d) / self.focal_length + self.frame_center_x
+            y = ((pixel_y - self.frame_center_y) * d) / self.focal_length + self.frame_center_y
+            z = d
+            xyz.append((x,y,z))
+
+        #print(dm)
+        #print(depth_center_values)
+        #print(depth_avgs)
+        print(xyz)
         region.depth_centers = dm
         region.depth_center_values = depth_center_values
         region.lim_inf_x = lim_inf_x
@@ -325,6 +336,7 @@ class Ether:
         region.lim_inf_y = lim_inf_y
         region.lim_sup_y = lim_sup_y
         region.depth_avgs = depth_avgs
+        region.xyz = xyz
 
 
     # Mask to verify depth
@@ -387,6 +399,8 @@ class Ether:
         cam.setResolution(PARAMS['VIDEO_RESOLUTION'])
         # Crop video to square shape (palm detection takes square image as input)
         self.frame_size = min(cam.getVideoSize())
+        self.frame_center_x = self.frame_size // 2
+        self.frame_center_y = self.frame_center_x
         cam.setVideoSize(self.frame_size, self.frame_size)
         cam.setFps(30)
         cam.setInterleaved(False)
