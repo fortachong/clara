@@ -387,6 +387,7 @@ class HandTheremin:
             
                 annotated_frame = video_frame.copy()
 
+
                 # Depth
                 in_depth = q_d.get()
                 # Calculations
