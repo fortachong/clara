@@ -55,7 +55,13 @@ The original idea was to add depth estimation to locate hand position in relatio
 
 UPDATE: we are making some progress integrating a palm detector and send the palm ROIs to the depth calculator. A rough test is in ```ether_palm_depth.py```. A further update will include a test of using depth to calculate the distance between an anchor ROI (possibly center of torso) with right hand palm to test the tone control in a similar fashion of ```ether.py```.
 
-What we have found so far is that maybe using CV to make a model for the relationship between tone and distance to antenna is a hard problem. There are two problems: first, the resolution is not very precise and second, the location of hand landmarks make a very noise or too variable reading (further filtering can alleviate this).
+What we have found so far is that maybe using CV to make a model for the relationship between tone and distance to antenna is a hard problem. There are two problems: first, the resolution is not very precise and second, the location of hand landmarks make a very noise or too variable reading (further filtering can alleviate this). In the next figure we see a scree capture.
+
+&nbsp;
+<img align="left" src="img/Frame-01805.png">
+&nbsp;
+
+
 
 ---
 ## Source Code
