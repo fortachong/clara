@@ -17,7 +17,7 @@ The project has 4 subsystems that use computer vision models:
 + Assisted Practicing System.
 
 &nbsp;
-<img align="left" src="img/IMG_20210613_172601.jpg" alt="Our setup" />
+<img align="left" width="600" src="img/IMG_20210613_172601.jpg" alt="Our setup" />
 
 &nbsp;
 
