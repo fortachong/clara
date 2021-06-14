@@ -66,7 +66,7 @@ UPDATE: we are making some progress integrating a palm detector and send the pal
 What we have found so far is that maybe using CV to make a model for the relationship between tone and distance to antenna is a hard problem. There are two problems: first, the resolution is not very precise and second, the location of hand landmarks make a very noise or too variable reading (further filtering can alleviate this). In the next figure we see a screen capture of ```ether.py``` sending data to Supercollider.
 
 &nbsp;
-<img align="left" width="1280" height="720" src="img/Frame-01805.png" alt="ether.py sending data to Supercollider">
+<img align="left" src="img/Frame-01805.png" alt="ether.py sending data to Supercollider">
 
 &nbsp;
 
