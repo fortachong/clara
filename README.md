@@ -16,15 +16,7 @@ The project has 4 subsystems that use computer vision models:
 + Calibration: Body and Theremin location.
 + Assisted Practicing System.
 
-&nbsp;
-<img align="left" width="600" src="img/IMG_20210613_172601.jpg" alt="Our setup" />
-
-&nbsp;
-
-
 ---
-&nbsp;
-
 ## Components
 
 ### 1. Theremin Simulator
@@ -69,9 +61,7 @@ What we have found so far is that maybe using CV to make a model for the relatio
 
 &nbsp;
 <img align="left" src="img/Frame-01805.png" alt="ether.py sending data to Supercollider">
-
 &nbsp;
-
 
 
 ---
