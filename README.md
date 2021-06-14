@@ -16,6 +16,11 @@ The project has 4 subsystems that use computer vision models:
 + Calibration: Body and Theremin location.
 + Assisted Practicing System.
 
+&nbsp;
+<img align="left" src="img/IMG_20210613_172601.jpg" alt="Our setup">
+&nbsp;
+
+
 ---
 ## Components
 
@@ -28,7 +33,7 @@ The simulator is a proof of a concept in order to test the capabilities of the O
 The mapping between the right hand and the tone antenna is not a linear mapping. So using a bit of machine learning we can do some measurements in order to map hand distnace to frequency. Distance should be estimated using computer vision. The figure shows a possible configuration. This will require some way to capture audio produced by the theremin and input it to the calibration program.
 
 &nbsp;
-<img align="center" width="600" height="506" src="img/calibration_600.png">
+<img align="center" width="600" height="506" src="img/calibration_600.png" alt="Calibration">
 &nbsp;
 
 ### 3. Calibration: Body and Theremin Location
@@ -40,7 +45,7 @@ A second calibration procedure is necessary for establishing an anchoring of the
 This would be a system that provides hints where to place hands and finger configuration in order to play the next note. Similar to systems like [Synthesia](https://synthesiagame.com/) for the piano. This requires parsing of the scene using a video capture device with Computer Vision capabilities like the OAKD. As depicted the parsing of the scene requires detection and location of the Theremin antenna as well as location of the hands. Ideally hand tracking and landmarks location is necessary for a fine detailed estimation of the tone. Another subsystem will read a music score file and guid the player for the next note.
 
 &nbsp;
-<img align="center" width="867" height="572" src="img/scene_parsing_600.png">
+<img align="center" width="867" height="572" src="img/scene_parsing_600.png" alt="Scene Parsing">
 &nbsp;
 
 
@@ -55,10 +60,10 @@ The original idea was to add depth estimation to locate hand position in relatio
 
 UPDATE: we are making some progress integrating a palm detector and send the palm ROIs to the depth calculator. A rough test is in ```ether_palm_depth.py```. A further update will include a test of using depth to calculate the distance between an anchor ROI (possibly center of torso) with right hand palm to test the tone control in a similar fashion of ```ether.py```.
 
-What we have found so far is that maybe using CV to make a model for the relationship between tone and distance to antenna is a hard problem. There are two problems: first, the resolution is not very precise and second, the location of hand landmarks make a very noise or too variable reading (further filtering can alleviate this). In the next figure we see a scree capture.
+What we have found so far is that maybe using CV to make a model for the relationship between tone and distance to antenna is a hard problem. There are two problems: first, the resolution is not very precise and second, the location of hand landmarks make a very noise or too variable reading (further filtering can alleviate this). In the next figure we see a screen capture of ```ether.py``` sending data to Supercollider.
 
 &nbsp;
-<img align="left" src="img/Frame-01805.png">
+<img align="left" src="img/Frame-01805.png" alt="ether.py sending data to Supercollider">
 &nbsp;
 
 
