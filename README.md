@@ -16,6 +16,8 @@ The project has 4 subsystems that use computer vision models:
 + Calibration: Body and Theremin location.
 + Assisted Practicing System.
 
+**UPDATE [2021/06/20]**: We are following a completely different approach. Thanks to another project from which we got inspired. See this project [https://github.com/cortictechnology/hand_asl_recognition](American Sign Language using Hand Landmarks). We are building a midi reader, an interface for playing and more importantly a dataset for hand gestures.
+
 ---
 ## Components
 

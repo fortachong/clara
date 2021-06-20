@@ -1,0 +1,1 @@
+crop_hand.shape[0]-pad+crop_hand.shape[1]
