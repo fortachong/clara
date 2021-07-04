@@ -74,8 +74,10 @@ PARAMS = {
     'LM_DETECTION_MODEL_PATH': "models/hand_landmark.blob",
     'ROI_DP_LOWER_TH': 100,
     'ROI_DP_UPPER_TH': 10000,
-    'INITIAL_ROI_TL': dai.Point2f(0.4, 0.4),
-    'INITIAL_ROI_BR': dai.Point2f(0.6, 0.6),
+    'INITIAL_ROI_TL': (0.4, 0.6),
+    'INITIAL_ROI_BR': (0.6, 0.8),
+    'INITIAL_ROI_TL': dai.Point2f(0.4, 0.6),
+    'INITIAL_ROI_BR': dai.Point2f(0.6, 0.8),
     'PREVIEW_WIDTH': 640,
     'PREVIEW_HEIGHT': 400,
     'SCREEN_MIN_FREQ': 0.5,
@@ -319,7 +321,11 @@ class Ether:
         first_config = dai.SpatialLocationCalculatorConfigData()
         first_config.depthThresholds.lowerThreshold = PARAMS['ROI_DP_LOWER_TH']
         first_config.depthThresholds.upperThreshold = PARAMS['ROI_DP_UPPER_TH'] 
-        first_config.roi = dai.Rect(PARAMS['INITIAL_ROI_TL'], PARAMS['INITIAL_ROI_BR'])
+        first_config.roi = dai.Rect(dai.Point2f(
+                                        PARAMS['INITIAL_ROI_TL'][0], PARAMS['INITIAL_ROI_TL'][1]), 
+                                    dai.Point2f(
+                                        PARAMS['INITIAL_ROI_BR'][0], PARAMS['INITIAL_ROI_BR'][1])
+                                    )
         spatial_calc.initialConfig.addROI(first_config)
         # # Spatial Calc -> Out spatial
         spatial_calc.out.link(xout_spatial_data.input)
@@ -392,6 +398,7 @@ class Ether:
                 depth_frame = in_depth.getFrame()
                 # Save First Spatial data input
                 spatial_data = in_depth_avg.getSpatialLocations()
+                
 
                 # Normalize depth map
                 depth_frame_color = cv2.normalize(depth_frame, None, 255, 0, cv2.NORM_INF, cv2.CV_8UC1)
@@ -468,6 +475,14 @@ class Ether:
                 #annotated_frame = annotated_frame[self.pad_h:self.pad_h+h, self.pad_w:self.pad_w+w]
                 # invert
                 inverted_frame = annotated_frame.copy()
+                # Add initial frame
+                s_y, s_x = inverted_frame.shape
+                cv2.rectangle(inverted_frame, 
+                    (int(PARAMS['INITIAL_ROI_TL'][0]*s_x), int(PARAMS['INITIAL_ROI_TL'][1]*s_y)), 
+                    (int(PARAMS['INITIAL_ROI_BR'][0]*s_x), int(PARAMS['INITIAL_ROI_BR'][1]*s_y)), 
+                    (0, 255, 0), 
+                    cv2.FONT_HERSHEY_SCRIPT_SIMPLEX
+                )
                 inverted_frame = cv2.flip(inverted_frame, 1)
                 # show palm regions
                 cv2.imshow("Palm Detection", inverted_frame)
