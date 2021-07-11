@@ -14,7 +14,7 @@ class WellTempered:
     # x has to be between 0 an 1
     def from_0_1_to_f(self, x):
         dx = math.floor(x * (self.units))
-        print(dx)
+        # print(dx)
         f = self.start_freq * math.pow(self.factor, dx)
         return f
 
