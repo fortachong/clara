@@ -10,6 +10,7 @@
 # , can be improved by using a body pose estimation)
 
 import cv2
+from cv2 import aruco
 import depthai as dai
 import numpy as np
 from datetime import datetime
@@ -48,7 +49,8 @@ PARAMS = {
     'DEPTH_ROI_FILENAME': 'roi.pkl',
     'DEPTH_CAPTURE_FILENAME': 'depth.pkl',
     'DEPTH_RESOLUTION': '400',
-    'BODY_ROI_FILENAME': 'roi_position.pkl'
+    'BODY_ROI_FILENAME': 'roi_position.pkl',
+    'ANTENNA_ROI_FILENAME': 'antenna_position.pkl'
 } 
 
 class DatasetteROICapture:
@@ -113,6 +115,8 @@ class DatasetteROICapture:
             'z': 0
         }
         self.step_size = 0.05
+        # Theremin Roi data
+        self.theremin_roi_data = None
 
     # Check current pipeline
     def check_pipeline(self):
@@ -130,6 +134,17 @@ class DatasetteROICapture:
         pipeline.setOpenVINOVersion(dai.OpenVINO.Version.VERSION_2021_2)
         ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
         print(f"[{ts}]: Setting up Depth...")    
+        cam_rgb = pipeline.createColorCamera()
+        cam_rgb.setPreviewSize(self.preview_width, self.preview_height)
+        cam_rgb.setInterleaved(False)
+        cam_rgb.setColorOrder(dai.ColorCameraProperties.ColorOrder.RGB)
+
+        xout_rgb = pipeline.createXLinkOut()
+        xout_rgb.setStreamName("rgb")
+        
+        # cam -> out
+        cam_rgb.preview.link(xout_rgb.input)
+        
         # Mono Left Camera
         mono_l = pipeline.createMonoCamera()
         # Mono Right Camera
@@ -199,6 +214,88 @@ class DatasetteROICapture:
         print(f"[{ts}]: Pipeline Created...")    
         return pipeline
 
+    # Pipeline for depth
+    def create_pipeline_antenna(self):
+        ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
+        print(f"[{ts}]: Creating Pipeline for Depth ...")
+        # Pipeline
+        pipeline = dai.Pipeline()
+        pipeline.setOpenVINOVersion(dai.OpenVINO.Version.VERSION_2021_2)
+        ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
+        print(f"[{ts}]: Setting up Depth...")    
+        xout_gray = pipeline.createXLinkOut()
+        xout_gray.setStreamName("gray")
+        
+        # Mono Left Camera
+        mono_l = pipeline.createMonoCamera()
+        # Mono Right Camera
+        mono_r = pipeline.createMonoCamera()
+        # Mono Camera Settings
+        mono_l.setResolution(self.depth_mono_resolution_left)
+        mono_l.setBoardSocket(dai.CameraBoardSocket.LEFT)
+        mono_r.setResolution(self.depth_mono_resolution_right)
+        mono_r.setBoardSocket(dai.CameraBoardSocket.RIGHT)
+        # Depth and Output
+        stereo = pipeline.createStereoDepth()
+        xout_depth = pipeline.createXLinkOut()
+        # Spatial calculator
+        spatial_calculator = pipeline.createSpatialLocationCalculator()
+        xout_spatial = pipeline.createXLinkOut()
+        xin_spatial_config = pipeline.createXLinkIn()
+
+        # Stream Names
+        xout_depth.setStreamName(self.depth_stream_name)
+        xout_spatial.setStreamName("spatial")
+        xin_spatial_config.setStreamName("config")
+        # Stereo Depth parameters 
+        output_depth = True
+        output_rectified = False
+        lr_check = False
+        subpixel = False
+        extended = False
+        stereo.setOutputDepth(output_depth)
+        stereo.setOutputRectified(output_rectified)
+        stereo.setConfidenceThreshold(255)
+        stereo.setLeftRightCheck(lr_check)
+        stereo.setSubpixel(subpixel)
+        stereo.setRectifyEdgeFillColor(0) # Black, to better see the cutout
+
+        # Median Filter
+        median = dai.StereoDepthProperties.MedianFilter.KERNEL_7x7
+
+        # incomptatible options
+        if lr_check or extended or subpixel:
+            median = dai.StereoDepthProperties.MedianFilter.MEDIAN_OFF
+
+        stereo.setMedianFilter(median) 
+        # Mono L / R -> Stereo L / R, Mono R -> Out Gray
+        mono_l.out.link(stereo.left)
+        mono_r.out.link(stereo.right)
+        mono_r.out.link(xout_gray.input)
+        # Stereo Depth -> Out
+        stereo.depth.link(xout_depth.input)
+        # Configuration:
+        config = dai.SpatialLocationCalculatorConfigData()
+        config.depthThresholds.lowerThreshold = 100
+        config.depthThresholds.upperThreshold = 3000
+        config.roi = dai.Rect(
+            dai.Point2f(self.body_roi['topl'][0],self.body_roi['topl'][1]),
+            dai.Point2f(self.body_roi['bottomr'][0],self.body_roi['bottomr'][1])
+        )
+        # Config calculator with initial ROI
+        spatial_calculator.setWaitForConfigInput(False)
+        spatial_calculator.initialConfig.addROI(config)
+        # Depth -> Calculator
+        spatial_calculator.passthroughDepth.link(xout_depth.input)
+        stereo.depth.link(spatial_calculator.inputDepth)
+        # Calculator -> Spatial data out, config -> calculator
+        spatial_calculator.out.link(xout_spatial.input)
+        xin_spatial_config.out.link(spatial_calculator.inputConfig)
+        
+        ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S") 
+        print(f"[{ts}]: Pipeline Created...")    
+        return pipeline
+
     # Show instructions
     def show_instructions(self, instr, frame, orig, font=cv2.FONT_HERSHEY_SIMPLEX, size=1, color=(240,180,100), thickness=2):
         cv2.putText(
@@ -212,7 +309,7 @@ class DatasetteROICapture:
         )
 
     # Show spatial data
-    def show_spatial_data(self, frame, spatial_data, color=(240,180,100)):
+    def show_spatial_data(self, frame, spatial_data, color=(0,0,255)):
         for data in spatial_data:
             roi = data.config.roi
             roi = roi.denormalize(width=frame.shape[1], height=frame.shape[0])
@@ -221,14 +318,11 @@ class DatasetteROICapture:
             xmax = int(roi.bottomRight().x)
             ymax = int(roi.bottomRight().y)
 
-            #depth_min = data.depthMin
-            #depth_max = data.depthMax
-
             font_type = cv2.FONT_HERSHEY_SIMPLEX
-            cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), color, cv2.FONT_HERSHEY_SCRIPT_SIMPLEX)
-            cv2.putText(frame, f"X: {int(data.spatialCoordinates.x)} mm", (xmin + 10, ymin + 20), font_type, 0.5, color)
-            cv2.putText(frame, f"Y: {int(data.spatialCoordinates.y)} mm", (xmin + 10, ymin + 35), font_type, 0.5, color)
-            cv2.putText(frame, f"Z: {int(data.spatialCoordinates.z)} mm", (xmin + 10, ymin + 50), font_type, 0.5, color)
+            cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), color, cv2.FONT_HERSHEY_SCRIPT_SIMPLEX, 1)
+            cv2.putText(frame, f"X: {int(data.spatialCoordinates.x)} mm", (xmax + 10, ymin + 20), font_type, 0.5, color, 2)
+            cv2.putText(frame, f"Y: {int(data.spatialCoordinates.y)} mm", (xmax + 10, ymin + 35), font_type, 0.5, color, 2)
+            cv2.putText(frame, f"Z: {int(data.spatialCoordinates.z)} mm", (xmax + 10, ymin + 50), font_type, 0.5, color, 2)
 
     # Show display with depth
     def show_depth_map(self, spatial_data, instr):
@@ -241,7 +335,6 @@ class DatasetteROICapture:
             self.show_spatial_data(depth_frame_color, spatial_data)
             self.show_instructions(instr, depth_frame_color, orig=(50,40), color=(0,0,255), size=0.6)
             cv2.imshow(self.depth_stream_name, depth_frame_color)
-
 
     # Capture roi for body position (torso)
     def capture_body(self):
@@ -258,7 +351,9 @@ class DatasetteROICapture:
             # 3. Queue for spatial config
             config = dai.SpatialLocationCalculatorConfigData()
             q_config = device.getInputQueue("config")
-            
+            # 4. RGB for visualization and ARUCO
+            q_rgb = device.getOutputQueue(name='rgb', maxSize=4, blocking=False)
+
             # current_fps
             new_config = False
             self.current_fps = FPS(mean_nb_frames=20)
@@ -268,7 +363,12 @@ class DatasetteROICapture:
                 # print(device.getChipTemperature().average)
                 frame_number += 1
                 self.current_fps.update()
-                # Get frame
+
+                # Get frame rgb
+                in_rgb = q_rgb.get()
+                rgb_frame = in_rgb.getCvFrame()
+
+                # Get frame depth
                 in_depth = q_d.get()
                 self.depth_frame = in_depth.getFrame()
 
@@ -281,7 +381,10 @@ class DatasetteROICapture:
                 # Show depth
                 instr = "q: quit | wasd: move roi | r: save"
                 self.show_depth_map(sp_data, instr)
-                
+
+                # Show rgb
+                cv2.imshow("Image", rgb_frame)
+
                 # Commands
                 key = cv2.waitKey(1) 
                 if key == ord('q') or key == 27:
@@ -327,6 +430,112 @@ class DatasetteROICapture:
                     # Pause on space bar
                     cv2.waitKey(0)
 
+    # Capture roi for antenna position using an aruco marker
+    def capture_antenna(self):
+        self.pipeline = self.create_pipeline_antenna()
+        self.check_pipeline()
+        with dai.Device(self.pipeline) as device:
+            ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
+            print(f"[{ts}]: Pipeline Started...")
+
+            # 1. Queue for depth
+            q_d = device.getOutputQueue(name=self.depth_stream_name, maxSize=4, blocking=False)
+            # 2. Queue for spatial calculator
+            q_s = device.getOutputQueue(name="spatial", maxSize=4, blocking=False)
+            # 3. Queue for spatial config
+            config = dai.SpatialLocationCalculatorConfigData()
+            q_config = device.getInputQueue("config")
+            # 4. Gray image for visualization and ARUCO
+            q_gray = device.getOutputQueue(name='gray', maxSize=4, blocking=False)
+
+            # Parameters for aruco marker detection
+            aruco_dict = aruco.Dictionary_get(aruco.DICT_4X4_50)
+            parameters =  aruco.DetectorParameters_create()
+
+            # current_fps
+            self.current_fps = FPS(mean_nb_frames=20)
+            frame_number = 0
+            theremin_roi_data ={}
+
+            while True:
+                # print(device.getChipTemperature().average)
+                frame_number += 1
+                self.current_fps.update()
+
+                # Get frame rgb
+                in_rgb = q_gray.get()
+                gray = in_rgb.getCvFrame()
+
+                # Get frame depth
+                in_depth = q_d.get()
+                self.depth_frame = in_depth.getFrame()
+
+                sp_data = q_s.get().getSpatialLocations()
+                for data in sp_data:
+                    theremin_roi_data['x'] = data.spatialCoordinates.x
+                    theremin_roi_data['y'] = data.spatialCoordinates.y
+                    theremin_roi_data['z'] = data.spatialCoordinates.z
+
+                # Show depth
+                instr = "q: quit | r: save"
+                self.show_depth_map(sp_data, instr)
+
+                corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
+                _ = aruco.drawDetectedMarkers(gray, corners, ids)
+                
+                # Add just the first corner
+                if len(corners) > 0:
+                    marker = corners[0]
+                    topx, topy = marker[0,0,0], marker[0,0,1]
+                    bottomx, bottomy = marker[0,2,0], marker[0,2,1]
+                    # Send config for detection
+                    theremin_roi_data = {
+                        'absolute': {
+                            'topx': int(topx),
+                            'topy': int(topy),
+                            'bottomx': int(bottomx),
+                            'bottomy': int(bottomy)
+                        },
+                        'relative': {
+                            'topx': topx / self.preview_width,
+                            'topy': topy / self.preview_height,
+                            'bottomx': bottomx / self.preview_width,
+                            'bottomy': bottomy / self.preview_height
+                        }
+                    }
+
+                    # Detect distance to marker
+                    config.roi = dai.Rect(
+                        dai.Point2f(
+                            topx / self.preview_width, 
+                            topy / self.preview_height
+                            ),
+                        dai.Point2f(
+                            bottomx / self.preview_width,
+                            bottomy / self.preview_height
+                            )
+                    )
+                    cfg = dai.SpatialLocationCalculatorConfig()
+                    cfg.addROI(config)
+                    q_config.send(cfg)
+                              
+                # Show rgb
+                cv2.imshow("Image", gray)
+
+                # Commands
+                key = cv2.waitKey(1) 
+                if key == ord('q') or key == 27:
+                    # quit
+                    break
+
+                if key == ord('r'):
+                    # Save capture
+                    self.theremin_roi_data = theremin_roi_data
+
+                elif key == 32:
+                    # Pause on space bar
+                    cv2.waitKey(0)                    
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--pdblob', default=PARAMS['PALM_DETECTION_MODEL_PATH'], type=str, 
@@ -356,6 +565,7 @@ if __name__ == "__main__":
         fps=args.fps
     )
 
+    # Mode 0: Capture body
     if args.mode == 0:
         # Capture Body roi
         datasette.capture_body() 
@@ -364,10 +574,24 @@ if __name__ == "__main__":
         if datasette.body_roi_data is not None:
             # Save to file
             roi = datasette.body_roi_data
+            print(roi)
             filename = PARAMS['DATASET_PATH'] + "/" + PARAMS['BODY_ROI_FILENAME']
             pickle.dump(roi, open(filename, "wb"))
             print(f"[{ts}]: ROI saved to file: {filename}")
         else:
             print(f"[{ts}]: No ROI defined")
+       
     else:
-        pass
+        # Mode 1: Capture antenna
+        datasette.capture_antenna() 
+        # Save antenna ROI
+        ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
+        if datasette.theremin_roi_data is not None:
+            # Save to file
+            roi = datasette.theremin_roi_data
+            print(roi)
+            filename = PARAMS['DATASET_PATH'] + "/" + PARAMS['ANTENNA_ROI_FILENAME']
+            pickle.dump(roi, open(filename, "wb"))
+            print(f"[{ts}]: Theremin ROI saved to file: {filename}")
+        else:
+            print(f"[{ts}]: No Theremin ROI defined")            

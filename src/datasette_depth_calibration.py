@@ -89,7 +89,12 @@ PARAMS = {
     'DATASET_PATH': 'data/positions',
     'DEPTH_ROI_FILENAME': 'roi.pkl',
     'DEPTH_CAPTURE_FILENAME': 'depth.pkl',
-    'DEPTH_RESOLUTION': '400'
+    'DEPTH_RESOLUTION': '400',
+    'BODY_ROI_FILENAME': 'roi_position.pkl',
+    'ANTENNA_ROI_FILENAME': 'antenna_position.pkl',
+    'ROI_TOLERANCE_BODY_Z': 50,
+    'ROI_TOLERANCE_ANTENNA_Z': 5,
+    'ROI_TOLERANCE_ANTENNA_X': 15
 } 
 
 # def to_planar(arr: np.ndarray, shape: tuple) -> list:
@@ -186,6 +191,8 @@ class DatasetteDepthCapture:
         self.lm_input_length = PARAMS['LM_INPUT_LENGTH']
         # Pipeline
         self.pipeline = None
+        # ROIs
+        self.position_rois = None
 
     # Post process inference from Palm Detector
     def pd_postprocess(self, inference):
@@ -323,6 +330,15 @@ class DatasetteDepthCapture:
         cam_out.setStreamName("cam_out")
         cam.preview.link(cam_out.input)
 
+        # Mono Cammera
+        #mono_r = pipeline.createMonoCamera()
+        # Mono Camera Settings
+        #mono_r.setResolution(self.depth_mono_resolution_right)
+        #mono_r.setBoardSocket(dai.CameraBoardSocket.RIGHT)
+        #cam_out = pipeline.createXLinkOut()
+        #cam_out.setStreamName("cam_out")
+        #mono_r.out.link(cam_out.input)
+        
         # Palm Detector
         ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
         print(f"[{ts}]: Mediapipe Palm Detector NN ...")
@@ -434,8 +450,12 @@ class DatasetteDepthCapture:
             cv2.imshow(self.depth_stream_name, depth_frame_color)
 
     # Set ROI 
-    def set_ROI(self, roi):
+    def set_depth_ROI(self, roi):
         self.depth_roi = roi
+    
+    # Set Body and Antenna ROI
+    def set_ROIs(self, rois):
+        self.position_rois = rois
 
     # Check current pipeline
     def check_pipeline(self):
@@ -455,6 +475,8 @@ class DatasetteDepthCapture:
             color, 
             thickness
         )
+
+    # Show axis for 
 
     # Capture hand positions to establish a ROI for depth
     def capture_hand(self):
@@ -483,6 +505,12 @@ class DatasetteDepthCapture:
             start_roi = False
             right_capture = True
             
+            # Tmp points (only for drawing)
+            rh_tmp_depth_topx = lh_tmp_depth_topx = 0
+            rh_tmp_depth_bottomx = lh_tmp_depth_bottomx = 0
+            rh_tmp_depth_topy = lh_tmp_depth_topy = 0
+            rh_tmp_depth_bottomy = lh_tmp_depth_bottomy = 0
+            
             while True:
                 frame_number += 1
                 self.current_fps.update()
@@ -490,7 +518,7 @@ class DatasetteDepthCapture:
                 # In video queue
                 in_video = q_video.get()
                 video_frame = in_video.getCvFrame()
-
+                
                 # Dimensions of the Video Frame
                 h, w = video_frame.shape[:2]
                 self.h = h
@@ -518,6 +546,7 @@ class DatasetteDepthCapture:
                 
                 # Datasette is a cool name
                 datasette_frame = video_frame.copy()
+
                 
                 # Palm inference
                 inference = q_pd_out.get()
@@ -540,7 +569,7 @@ class DatasetteDepthCapture:
                     for region in self.regions:
                         inference = q_lm_out.get()
                         self.lm_postprocess(region, inference)
-                        self.lm_render(datasette_frame, region)
+                        # self.lm_render(datasette_frame, region)
 
                         if start_roi:
                             self.lm_transform(region)
@@ -549,34 +578,83 @@ class DatasetteDepthCapture:
                             dbx_candidate = np.max(region.lm_xy_y_rescaled[:, 0])
                             dty_candidate = np.min(region.lm_xy_y_rescaled[:, 1])
                             dby_candidate = np.max(region.lm_xy_y_rescaled[:, 1])
+                            dtx_candidate_a = np.min(region.lm_xy[:, 0])
+                            dbx_candidate_a = np.max(region.lm_xy[:, 0])
+                            dty_candidate_a = np.min(region.lm_xy[:, 1])
+                            dby_candidate_a = np.max(region.lm_xy[:, 1])
                             
                             # Get rigth hand square enclosure (only right hand)
                             if region.handedness >= 0.8 and right_capture is True:
                                 if self.rh_depth_topx > dtx_candidate:
                                     self.rh_depth_topx = dtx_candidate
+                                    rh_tmp_depth_topx = dtx_candidate_a
                                 if self.rh_depth_bottomx < dbx_candidate:
                                     self.rh_depth_bottomx = dbx_candidate
+                                    rh_tmp_depth_bottomx = dbx_candidate_a
                                 if self.rh_depth_topy > dty_candidate:
                                     self.rh_depth_topy = dty_candidate
+                                    rh_tmp_depth_topy = dty_candidate_a
                                 if self.rh_depth_bottomy < dby_candidate:
                                     self.rh_depth_bottomy = dby_candidate
+                                    rh_tmp_depth_bottomy = dby_candidate_a
 
+                                # Draw:
+                                cv2.rectangle(
+                                    datasette_frame,
+                                    (dtx_candidate_a, dty_candidate_a),
+                                    (dbx_candidate_a, dby_candidate_a),
+                                    (0, 0, 255),
+                                    1
+                                )
+                                cv2.rectangle(
+                                    datasette_frame,
+                                    (rh_tmp_depth_topx, rh_tmp_depth_topy),
+                                    (rh_tmp_depth_bottomx, rh_tmp_depth_bottomy),
+                                    (0, 0, 255),
+                                    2
+                                )
+                            
                             # Get left hand square enclosure (only left hand)
                             if region.handedness <= 0.2 and right_capture is not True:
                                 if self.lh_depth_topx > dtx_candidate:
                                     self.lh_depth_topx = dtx_candidate
+                                    lh_tmp_depth_topx = dtx_candidate_a
                                 if self.lh_depth_bottomx < dbx_candidate:
                                     self.lh_depth_bottomx = dbx_candidate
+                                    lh_tmp_depth_bottomx = dbx_candidate_a
                                 if self.lh_depth_topy > dty_candidate:
                                     self.lh_depth_topy = dty_candidate
+                                    lh_tmp_depth_topy = dty_candidate_a
                                 if self.lh_depth_bottomy < dby_candidate:
                                     self.lh_depth_bottomy = dby_candidate
+                                    lh_tmp_depth_bottomy = dby_candidate_a
+                                # Draw:
+                                cv2.rectangle(
+                                    datasette_frame,
+                                    (dtx_candidate_a, dty_candidate_a),
+                                    (dbx_candidate_a, dby_candidate_a),
+                                    (255, 0, 0),
+                                    1
+                                )
+                                cv2.rectangle(
+                                    datasette_frame,
+                                    (lh_tmp_depth_topx, lh_tmp_depth_topy),
+                                    (lh_tmp_depth_bottomx, lh_tmp_depth_bottomy),
+                                    (255, 0, 0),
+                                    2
+                                )                                    
 
                 self.current_fps.display(datasette_frame, orig=(50,50), color=(0,0,255), size=0.6)
-                instr = "q: quit | r: start rh ROI | l: start lh ROI | s: save ROI"
+                instr = "q: quit | r: start rh | l: start lh | s: save | t: reset"
                 self.show_instructions(instr, datasette_frame, orig=(50,70), color=(0,0,255), size=0.6)
                 
                 # Show roi
+                cv2.line(datasette_frame, 
+                    (self.position_rois['antenna']['absolute']['topx'], (self.frame_size - self.h)//2),
+                    (self.position_rois['antenna']['absolute']['topx'], self.preview_height - 1 + (self.frame_size - self.h)//2),
+                    (0,255,0),
+                    2
+                )
                 cv2.imshow("Hand Position Configurations", datasette_frame)
 
                 # Commands
@@ -622,6 +700,14 @@ class DatasetteDepthCapture:
                     print(f"[{ts}]: Latest ROI:")
                     print(self.depth_roi)
 
+                if key == ord('t'):
+                    start_roi = False
+                    # Reset roi 
+                    self.rh_depth_topx = self.lh_depth_topx = 1
+                    self.rh_depth_bottomx = self.lh_depth_bottomx = 0
+                    self.rh_depth_topy = self.lh_depth_topy = 1
+                    self.rh_depth_bottomy = self.lh_depth_bottomy = 0
+                    
                 elif key == 32:
                     # Pause on space bar
                     cv2.waitKey(0)
@@ -704,9 +790,29 @@ if __name__ == "__main__":
     parser.add_argument('--hsize', default=PARAMS['HAND_SIZE'], type=int, help="Frame size for showing hand")
     parser.add_argument('--mode', default=0, type=int, help="Capture Mode: 0 -> Capture ROI, 1 -> Depth")
     parser.add_argument('--prefix', default='capture', type=str, help="Depth dataset prefix name")
+    parser.add_argument('--antenna', default=PARAMS['ANTENNA_ROI_FILENAME'], type=str, help="ROI of the Theremin antenna")
+    parser.add_argument('--body', default=PARAMS['BODY_ROI_FILENAME'], type=str, help="ROI of body position")
     args = parser.parse_args()
 
     print(team.banner)
+
+    # Read positon Rois
+    ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
+    print(f"[{ts}] Reading ROIs...")
+    filename_1 = f"{PARAMS['DATASET_PATH']}/{args.body}"
+    filename_2 = f"{PARAMS['DATASET_PATH']}/{args.antenna}"
+    rois = None
+    with open(filename_1, "rb") as fl1:
+        with open(filename_2, "rb") as fl2:
+            rois = {}
+            rois['body'] = pickle.load(fl1)
+            rois['antenna'] = pickle.load(fl2)
+            print(rois)
+
+    if rois is None:
+        print("ROIs not defined: Please run the previous step for configuration")
+        exit()
+
     # Message Queue
     messages = Queue.Queue()
 
@@ -725,6 +831,10 @@ if __name__ == "__main__":
         hand_size=args.hsize
     )
 
+    # The ROIs
+    datasette.set_ROIs(rois)
+
+    # mode 0: Capture the hands regions (left and right)
     if args.mode == 0:
         # Capture Hands ROI
         datasette.capture_hand() 
@@ -747,7 +857,7 @@ if __name__ == "__main__":
             with open(filename, "rb") as file:
                 roi = pickle.load(file)
                 print(roi)
-                datasette.set_ROI(roi)
+                datasette.set_depth_ROI(roi)
         else:
             print(f"[{ts}]: No ROI defined: {filename}")                            
         datasette.capture_depth() 

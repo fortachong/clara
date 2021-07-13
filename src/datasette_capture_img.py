@@ -71,8 +71,8 @@ class DatasetteThereminCapture:
             for idx, node in node_map.items():
                 print(f"{idx}: {node.getName()}")
 
-    # Pipeline for depth
-    def create_pipeline_depth(self):
+    # Pipeline for capturing images (still)
+    def create_pipeline_img(self):
         ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
         print(f"[{ts}]: Creating Pipeline RGB Camera ...")
         
@@ -130,7 +130,7 @@ class DatasetteThereminCapture:
 
     # Capture Image
     def capture_img(self):
-        self.pipeline = self.create_pipeline_depth()
+        self.pipeline = self.create_pipeline_img()
         self.check_pipeline()
         with dai.Device(self.pipeline) as device:
             ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
@@ -177,7 +177,6 @@ class DatasetteThereminCapture:
                         print(k)
                         frame = cv2.imdecode(still_frame.getData(), cv2.IMREAD_UNCHANGED)
                         self.image_buffer[k] = frame
-
                     
                 if key == ord('s'):
                     self.images = self.image_buffer

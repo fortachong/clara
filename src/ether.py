@@ -16,7 +16,7 @@ from pathlib import Path
 from FPS import FPS, now
 import threading
 import queue as Queue
-import well_tempered as wtmp
+import equal_tempered as eqtmp
 from pythonosc import udp_client
 import argparse
 
@@ -609,7 +609,7 @@ if __name__ == "__main__":
                         help="Port of Supercollider Server")
     args = parser.parse_args()
 
-    scale = wtmp.WellTempered(octaves=3, start_freq=440, resolution=10000)
+    scale = eqtmp.EqualTempered(octaves=3, start_freq=440, resolution=1000)
     # Create Synthesizer
     synth = EtherSynth(args.scserver, args.scport)
     # Message Queues

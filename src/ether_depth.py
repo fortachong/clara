@@ -14,14 +14,13 @@ from datetime import datetime
 import mediapipe_utils as mpu
 from pathlib import Path
 from FPS import FPS, now
-import well_tempered as wtmp
+import equal_tempered as eqtmp
 from pythonosc import udp_client
 import threading
 import queue as Queue
 import argparse
 import pickle
 import team
-
 
 # Credits:
 # Hand Tracking Model from: geax
@@ -520,7 +519,7 @@ if __name__ == "__main__":
         print(f"[{ts}]: No ROI defined: {filename}")
 
     if the.depth_roi is not None:
-        scale = wtmp.WellTempered(octaves=5, start_freq=220, resolution=10000)
+        scale = eqtmp.EqualTempered(octaves=5, start_freq=220, resolution=1000)
         # Create Synthesizer
         synth = EtherSynth(args.scserver, args.scport)
         # Process Thread
