@@ -574,7 +574,7 @@ if __name__ == "__main__":
         if datasette.body_roi_data is not None:
             # Save to file
             roi = datasette.body_roi_data
-            print(roi)
+            for k, v in roi.items(): print(f"{k}: {v}")
             filename = PARAMS['DATASET_PATH'] + "/" + PARAMS['BODY_ROI_FILENAME']
             pickle.dump(roi, open(filename, "wb"))
             print(f"[{ts}]: ROI saved to file: {filename}")
@@ -589,7 +589,7 @@ if __name__ == "__main__":
         if datasette.theremin_roi_data is not None:
             # Save to file
             roi = datasette.theremin_roi_data
-            print(roi)
+            for k, v in roi.items(): print(f"{k}: {v}")
             filename = PARAMS['DATASET_PATH'] + "/" + PARAMS['ANTENNA_ROI_FILENAME']
             pickle.dump(roi, open(filename, "wb"))
             print(f"[{ts}]: Theremin ROI saved to file: {filename}")

@@ -16,6 +16,7 @@
 
 import os
 import cv2
+from cv2 import aruco
 import depthai as dai
 import numpy as np
 from datetime import datetime
@@ -88,7 +89,7 @@ PARAMS = {
     'HAND_SIZE': 400,
     'DATASET_PATH': 'data/positions',
     'DEPTH_ROI_FILENAME': 'roi.pkl',
-    'DEPTH_CAPTURE_FILENAME': 'depth.pkl',
+    'DEPTH_CAPTURE_FILENAME': 'depth_capture.pkl',
     'DEPTH_RESOLUTION': '400',
     'BODY_ROI_FILENAME': 'roi_position.pkl',
     'ANTENNA_ROI_FILENAME': 'antenna_position.pkl',
@@ -106,11 +107,6 @@ class DatasetteDepthCapture:
     def __init__(
             self, 
             queue,
-            pd_path='',
-            pd_score_thresh=0.5,
-            pd_nms_thresh=0.3,
-            lm_path='',
-            lm_score_threshold=0.5,
             preview_width=640,
             preview_height=400,
             hand_buffer_pixels=20,
@@ -161,14 +157,6 @@ class DatasetteDepthCapture:
         self.show_depth = True
         self.depth_data = None
 
-        # Palm detector path
-        self.pd_path = pd_path
-        self.pd_score_thresh = pd_score_thresh
-        self.pd_nms_thresh = pd_nms_thresh
-        # Landmark detector
-        self.lm_path = lm_path
-        self.lm_score_threshold = lm_score_threshold
-        self.fps = fps
         # For capturing hands
         self.hand_buffer_pixels = hand_buffer_pixels
         self.hand_size = hand_size
@@ -176,119 +164,10 @@ class DatasetteDepthCapture:
         # Preview size
         self.preview_width = preview_width
         self.preview_height = preview_height
-        # Some flags
-        self.use_lm = True
-        self.show_landmarks = True
-        self.show_handedness = False
-        self.show_pd_box = True
-        self.show_pd_kps = True
-        self.show_rot_rect = False
-        self.show_scores = True
-        self.show_landmarks = True
-        # Palm detector input size
-        self.pd_input_length = PARAMS['PALM_DETECTION_INPUT_LENGTH']
-        # Landmark detetector input size
-        self.lm_input_length = PARAMS['LM_INPUT_LENGTH']
         # Pipeline
         self.pipeline = None
         # ROIs
         self.position_rois = None
-
-    # Post process inference from Palm Detector
-    def pd_postprocess(self, inference):
-        scores = np.array(
-            inference.getLayerFp16("classificators"), 
-            dtype=np.float16) # 896
-        bboxes = np.array(
-            inference.getLayerFp16("regressors"), 
-            dtype=np.float16).reshape((self.nb_anchors,18)) # 896x18
-        # Decode bboxes
-        self.regions = mpu.decode_bboxes(
-            self.pd_score_thresh, 
-            scores, 
-            bboxes, 
-            self.anchors)
-        # Non maximum suppression
-        self.regions = mpu.non_max_suppression(self.regions, self.pd_nms_thresh)
-        mpu.detections_to_rect(self.regions)
-        mpu.rect_transformation(self.regions, self.frame_size, self.frame_size)
-
-    # Render Palm Detection
-    def pd_render(self, frame):
-        for r in self.regions:
-            if self.show_pd_box:
-                box = (np.array(r.pd_box) * self.frame_size).astype(int)
-                cv2.rectangle(frame, (box[0], box[1]), (box[0]+box[2], box[1]+box[3]), (0,255,0), 1)
-            if self.show_pd_kps:
-                for i,kp in enumerate(r.pd_kps):
-                    x = int(kp[0] * self.frame_size)
-                    y = int(kp[1] * self.frame_size)
-                    cv2.circle(frame, (x, y), 6, (0,0,255), -1)
-                    cv2.putText(frame, str(i), (x, y+12), cv2.FONT_HERSHEY_PLAIN, 1.5, (0,255,0), 2)
-            if self.show_scores:
-                cv2.putText(frame, f"Palm score: {r.pd_score:.2f}", 
-                        (int(r.pd_box[0] * self.frame_size+10), int((r.pd_box[1]+r.pd_box[3])*self.frame_size+60)), 
-                        cv2.FONT_HERSHEY_PLAIN, 1, (255,255,0), 2)
-
-    # Process Landmarks
-    def lm_postprocess(self, region, inference):
-        region.lm_score = inference.getLayerFp16("Identity_1")[0]    
-        region.handedness = inference.getLayerFp16("Identity_2")[0]
-        lm_raw = np.array(inference.getLayerFp16("Identity_dense/BiasAdd/Add"))
-        # lm_raw = np.array(inference.getLayerFp16("Squeeze"))
-        
-        lm = []
-        for i in range(int(len(lm_raw)/3)):
-            # x,y,z -> x/w,y/h,z/w (here h=w)
-            lm.append(lm_raw[3*i:3*(i+1)]/self.lm_input_length)
-        region.landmarks = lm
-
-    # Transform xy coordinates to normalized xy and y-rescaled
-    def lm_transform(self, region):
-        src = np.array([(0, 0), (1, 0), (1, 1)], dtype=np.float32)
-        dst = np.array([ (x, y) for x,y in region.rect_points[1:]], dtype=np.float32) # region.rect_points[0] is left bottom point !
-        mat = cv2.getAffineTransform(src, dst) 
-
-        dst_normal = np.array([ (x/self.frame_size, y/self.frame_size) for x,y in region.rect_points[1:]], dtype=np.float32) # region.rect_points[0] is left bottom point !
-        mat_normal = cv2.getAffineTransform(src, dst_normal)
-
-        lm_xy = np.expand_dims(np.array([(l[0], l[1]) for l in region.landmarks]), axis=0)
-        lm_xy = np.squeeze(cv2.transform(lm_xy, mat)).astype(np.int)
-
-        lm_xy_normal = np.expand_dims(np.array([(l[0], l[1]) for l in region.landmarks]), axis=0)
-        lm_xy_normal = np.squeeze(cv2.transform(lm_xy_normal, mat_normal)).astype(np.float32)
-        
-        region.lm_xy = lm_xy    
-        region.lm_xy_normalized = lm_xy_normal
-        # y rescaled
-        lm_xy_y_rescaled = lm_xy_normal.copy()
-        lm_xy_y_rescaled[:, 1] = (lm_xy_y_rescaled[:, 1] - self.pad_h / self.frame_size) * (self.frame_size/self.preview_height)
-        region.lm_xy_y_rescaled = lm_xy_y_rescaled
-
-    # Render Landmarks
-    def lm_render(self, frame, region):
-        if region.lm_score > self.lm_score_threshold:
-            if self.show_rot_rect:
-                cv2.polylines(frame, [np.array(region.rect_points)], True, (0,255,255), 2, cv2.LINE_AA)
-            
-            if self.show_landmarks:
-                src = np.array([(0, 0), (1, 0), (1, 1)], dtype=np.float32)
-                dst = np.array([ (x, y) for x,y in region.rect_points[1:]], dtype=np.float32) # region.rect_points[0] is left bottom point !
-                # print(region.rect_points[1:])
-                mat = cv2.getAffineTransform(src, dst)
-                lm_xy = np.expand_dims(np.array([(l[0], l[1]) for l in region.landmarks]), axis=0)
-                lm_xy = np.squeeze(cv2.transform(lm_xy, mat)).astype(np.int)
-                list_connections = [[0, 1, 2, 3, 4], 
-                                    [0, 5, 6, 7, 8], 
-                                    [5, 9, 10, 11, 12],
-                                    [9, 13, 14 , 15, 16],
-                                    [13, 17],
-                                    [0, 17, 18, 19, 20]]
-                lines = [np.array([lm_xy[point] for point in line]) for line in list_connections]
-                cv2.polylines(frame, lines, False, (255, 0, 0), 2, cv2.LINE_AA)
-                for x,y in lm_xy:
-                    # print(x,y)
-                    cv2.circle(frame, (x, y), 2, (0,128,255), -1)
 
     # Pipeline for hand landmarks
     def create_pipeline_lm(self):
@@ -321,49 +200,15 @@ class DatasetteDepthCapture:
         pipeline.setOpenVINOVersion(dai.OpenVINO.Version.VERSION_2021_2)
         # Color Camera
         ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
-        print(f"[{ts}]: Color Camera ...")       
-        cam = pipeline.createColorCamera()
-        cam.setPreviewSize(self.preview_width, self.preview_height)
-        cam.setInterleaved(False)
-        cam.setBoardSocket(dai.CameraBoardSocket.RGB)
+        print(f"[{ts}]: Right Mono Camera ...")       
+        # Mono Camera
+        mono_r = pipeline.createMonoCamera()
+        # Mono Camera Settings
+        mono_r.setResolution(self.depth_mono_resolution_right)
+        mono_r.setBoardSocket(dai.CameraBoardSocket.RIGHT)
         cam_out = pipeline.createXLinkOut()
         cam_out.setStreamName("cam_out")
-        cam.preview.link(cam_out.input)
-
-        # Mono Cammera
-        #mono_r = pipeline.createMonoCamera()
-        # Mono Camera Settings
-        #mono_r.setResolution(self.depth_mono_resolution_right)
-        #mono_r.setBoardSocket(dai.CameraBoardSocket.RIGHT)
-        #cam_out = pipeline.createXLinkOut()
-        #cam_out.setStreamName("cam_out")
-        #mono_r.out.link(cam_out.input)
-        
-        # Palm Detector
-        ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
-        print(f"[{ts}]: Mediapipe Palm Detector NN ...")
-        pd_nn = pipeline.createNeuralNetwork()
-        pd_nn.setBlobPath(str(Path(self.pd_path).resolve().absolute()))
-        pd_nn.setNumInferenceThreads(2)
-        pd_in = pipeline.createXLinkIn()
-        pd_in.setStreamName("pd_in")
-        pd_in.out.link(pd_nn.input)
-        pd_out = pipeline.createXLinkOut()
-        pd_out.setStreamName("pd_out")
-        pd_nn.out.link(pd_out.input)
-
-        # Hand Landmark Detector
-        ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
-        print(f"[{ts}]: Mediapipe Hand Landmark NN...")       
-        lm_nn = pipeline.createNeuralNetwork()
-        lm_nn.setBlobPath(str(Path(self.lm_path).resolve().absolute()))
-        lm_nn.setNumInferenceThreads(2)
-        lm_in = pipeline.createXLinkIn()
-        lm_in.setStreamName("lm_in")
-        lm_in.out.link(lm_nn.input)
-        lm_out = pipeline.createXLinkOut()
-        lm_out.setStreamName("lm_out")
-        lm_nn.out.link(lm_out.input)           
+        mono_r.out.link(cam_out.input)         
         ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
         print(f"[{ts}]: Pipeline Created ...")
         return pipeline
@@ -490,15 +335,12 @@ class DatasetteDepthCapture:
             # Queues
             # 1. Out: Video output
             q_video = device.getOutputQueue(name="cam_out", maxSize=1, blocking=False)
-            # 2. In: Palm Detector Input
-            q_pd_in = device.getInputQueue(name="pd_in")
-            # 3. Out: Palm Detector Output
-            q_pd_out = device.getOutputQueue(name="pd_out", maxSize=4, blocking=False)
-            # 4. Landmarks Out
-            q_lm_out = device.getOutputQueue(name="lm_out", maxSize=4, blocking=False)
-            # 5. Landmarks In
-            q_lm_in = device.getInputQueue(name="lm_in")
             
+            # Aruco markers
+            # Parameters for aruco marker detection
+            aruco_dict = aruco.Dictionary_get(aruco.DICT_4X4_50)
+            parameters =  aruco.DetectorParameters_create()
+
             # current_fps
             self.current_fps = FPS(mean_nb_frames=20)
             frame_number = 0
@@ -518,144 +360,103 @@ class DatasetteDepthCapture:
                 # In video queue
                 in_video = q_video.get()
                 video_frame = in_video.getCvFrame()
-                
-                # Dimensions of the Video Frame
-                h, w = video_frame.shape[:2]
-                self.h = h
-                self.w = w
-                # Padding top and bottom
-                self.frame_size = max(self.h, self.w)
-                self.pad_h = (self.frame_size - self.h)//2
-                self.pad_w = (self.frame_size - self.w)//2
-
-                video_frame = cv2.copyMakeBorder(
-                    video_frame,
-                    self.pad_h,
-                    self.pad_h,
-                    self.pad_w,
-                    self.pad_w,
-                    cv2.BORDER_CONSTANT
-                )
-
-                # Frame for NN
-                frame_nn = dai.ImgFrame()
-                frame_nn.setWidth(self.pd_input_length)
-                frame_nn.setHeight(self.pd_input_length)
-                frame_nn.setData(to_planar(video_frame, (self.pd_input_length, self.pd_input_length)))
-                q_pd_in.send(frame_nn)
-                
+                            
                 # Datasette is a cool name
-                datasette_frame = video_frame.copy()
+                gray = video_frame.copy()
+                gray = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
 
+                corners, ids, _ = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
+                _ = aruco.drawDetectedMarkers(gray, corners, ids)
                 
-                # Palm inference
-                inference = q_pd_out.get()
-                self.pd_postprocess(inference)
-                self.pd_render(datasette_frame)
-                if self.use_lm:
-                    # Prepare data for landmarks
-                    for region in self.regions:
-                        img_hand = mpu.warp_rect_img(
-                            region.rect_points, 
-                            video_frame, 
-                            self.lm_input_length, 
-                            self.lm_input_length
-                        )
-                        nn_data = dai.NNData()
-                        nn_data.setLayer("input_1", to_planar(img_hand, (self.lm_input_length, self.lm_input_length)))
-                        q_lm_in.send(nn_data)
 
-                    # Retrieve Landmarks
-                    for region in self.regions:
-                        inference = q_lm_out.get()
-                        self.lm_postprocess(region, inference)
-                        # self.lm_render(datasette_frame, region)
-
-                        if start_roi:
-                            self.lm_transform(region)
-                            # Save min and max regions
-                            dtx_candidate = np.min(region.lm_xy_y_rescaled[:, 0])
-                            dbx_candidate = np.max(region.lm_xy_y_rescaled[:, 0])
-                            dty_candidate = np.min(region.lm_xy_y_rescaled[:, 1])
-                            dby_candidate = np.max(region.lm_xy_y_rescaled[:, 1])
-                            dtx_candidate_a = np.min(region.lm_xy[:, 0])
-                            dbx_candidate_a = np.max(region.lm_xy[:, 0])
-                            dty_candidate_a = np.min(region.lm_xy[:, 1])
-                            dby_candidate_a = np.max(region.lm_xy[:, 1])
+                        # if start_roi:
+                        #     self.lm_transform(region)
+                        #     # Save min and max regions
+                        #     dtx_candidate = np.min(region.lm_xy_y_rescaled[:, 0])
+                        #     dbx_candidate = np.max(region.lm_xy_y_rescaled[:, 0])
+                        #     dty_candidate = np.min(region.lm_xy_y_rescaled[:, 1])
+                        #     dby_candidate = np.max(region.lm_xy_y_rescaled[:, 1])
+                        #     dtx_candidate_a = np.min(region.lm_xy[:, 0])
+                        #     dbx_candidate_a = np.max(region.lm_xy[:, 0])
+                        #     dty_candidate_a = np.min(region.lm_xy[:, 1])
+                        #     dby_candidate_a = np.max(region.lm_xy[:, 1])
                             
-                            # Get rigth hand square enclosure (only right hand)
-                            if region.handedness >= 0.8 and right_capture is True:
-                                if self.rh_depth_topx > dtx_candidate:
-                                    self.rh_depth_topx = dtx_candidate
-                                    rh_tmp_depth_topx = dtx_candidate_a
-                                if self.rh_depth_bottomx < dbx_candidate:
-                                    self.rh_depth_bottomx = dbx_candidate
-                                    rh_tmp_depth_bottomx = dbx_candidate_a
-                                if self.rh_depth_topy > dty_candidate:
-                                    self.rh_depth_topy = dty_candidate
-                                    rh_tmp_depth_topy = dty_candidate_a
-                                if self.rh_depth_bottomy < dby_candidate:
-                                    self.rh_depth_bottomy = dby_candidate
-                                    rh_tmp_depth_bottomy = dby_candidate_a
-
-                                # Draw:
-                                cv2.rectangle(
-                                    datasette_frame,
-                                    (dtx_candidate_a, dty_candidate_a),
-                                    (dbx_candidate_a, dby_candidate_a),
-                                    (0, 0, 255),
-                                    1
-                                )
-                                cv2.rectangle(
-                                    datasette_frame,
-                                    (rh_tmp_depth_topx, rh_tmp_depth_topy),
-                                    (rh_tmp_depth_bottomx, rh_tmp_depth_bottomy),
-                                    (0, 0, 255),
-                                    2
-                                )
+                        #     # Get rigth hand square enclosure (only right hand)
+                        #     f1 = region.lm_xy[LM_PINKY_TIP,0]
+                        #     f2 = region.lm_xy[LM_THUMB_TIP,0]
                             
-                            # Get left hand square enclosure (only left hand)
-                            if region.handedness <= 0.2 and right_capture is not True:
-                                if self.lh_depth_topx > dtx_candidate:
-                                    self.lh_depth_topx = dtx_candidate
-                                    lh_tmp_depth_topx = dtx_candidate_a
-                                if self.lh_depth_bottomx < dbx_candidate:
-                                    self.lh_depth_bottomx = dbx_candidate
-                                    lh_tmp_depth_bottomx = dbx_candidate_a
-                                if self.lh_depth_topy > dty_candidate:
-                                    self.lh_depth_topy = dty_candidate
-                                    lh_tmp_depth_topy = dty_candidate_a
-                                if self.lh_depth_bottomy < dby_candidate:
-                                    self.lh_depth_bottomy = dby_candidate
-                                    lh_tmp_depth_bottomy = dby_candidate_a
-                                # Draw:
-                                cv2.rectangle(
-                                    datasette_frame,
-                                    (dtx_candidate_a, dty_candidate_a),
-                                    (dbx_candidate_a, dby_candidate_a),
-                                    (255, 0, 0),
-                                    1
-                                )
-                                cv2.rectangle(
-                                    datasette_frame,
-                                    (lh_tmp_depth_topx, lh_tmp_depth_topy),
-                                    (lh_tmp_depth_bottomx, lh_tmp_depth_bottomy),
-                                    (255, 0, 0),
-                                    2
-                                )                                    
+                        #     if f1 < f2 and right_capture is True:
+                        #         if self.rh_depth_topx > dtx_candidate:
+                        #             self.rh_depth_topx = dtx_candidate
+                        #             rh_tmp_depth_topx = dtx_candidate_a
+                        #         if self.rh_depth_bottomx < dbx_candidate:
+                        #             self.rh_depth_bottomx = dbx_candidate
+                        #             rh_tmp_depth_bottomx = dbx_candidate_a
+                        #         if self.rh_depth_topy > dty_candidate:
+                        #             self.rh_depth_topy = dty_candidate
+                        #             rh_tmp_depth_topy = dty_candidate_a
+                        #         if self.rh_depth_bottomy < dby_candidate:
+                        #             self.rh_depth_bottomy = dby_candidate
+                        #             rh_tmp_depth_bottomy = dby_candidate_a
 
-                self.current_fps.display(datasette_frame, orig=(50,50), color=(0,0,255), size=0.6)
+                        #         # Draw:
+                        #         cv2.rectangle(
+                        #             datasette_frame,
+                        #             (dtx_candidate_a, dty_candidate_a),
+                        #             (dbx_candidate_a, dby_candidate_a),
+                        #             (0, 0, 255),
+                        #             1
+                        #         )
+                        #         cv2.rectangle(
+                        #             datasette_frame,
+                        #             (rh_tmp_depth_topx, rh_tmp_depth_topy),
+                        #             (rh_tmp_depth_bottomx, rh_tmp_depth_bottomy),
+                        #             (0, 0, 255),
+                        #             2
+                        #         )
+                            
+                        #     # Get left hand square enclosure (only left hand)
+                        #     if f1 >= f2 and right_capture is not True:
+                        #         if self.lh_depth_topx > dtx_candidate:
+                        #             self.lh_depth_topx = dtx_candidate
+                        #             lh_tmp_depth_topx = dtx_candidate_a
+                        #         if self.lh_depth_bottomx < dbx_candidate:
+                        #             self.lh_depth_bottomx = dbx_candidate
+                        #             lh_tmp_depth_bottomx = dbx_candidate_a
+                        #         if self.lh_depth_topy > dty_candidate:
+                        #             self.lh_depth_topy = dty_candidate
+                        #             lh_tmp_depth_topy = dty_candidate_a
+                        #         if self.lh_depth_bottomy < dby_candidate:
+                        #             self.lh_depth_bottomy = dby_candidate
+                        #             lh_tmp_depth_bottomy = dby_candidate_a
+                        #         # Draw:
+                        #         cv2.rectangle(
+                        #             datasette_frame,
+                        #             (dtx_candidate_a, dty_candidate_a),
+                        #             (dbx_candidate_a, dby_candidate_a),
+                        #             (255, 0, 0),
+                        #             1
+                        #         )
+                        #         cv2.rectangle(
+                        #             datasette_frame,
+                        #             (lh_tmp_depth_topx, lh_tmp_depth_topy),
+                        #             (lh_tmp_depth_bottomx, lh_tmp_depth_bottomy),
+                        #             (255, 0, 0),
+                        #             2
+                        #         )                                    
+
+                self.current_fps.display(gray, orig=(50,50), color=(0,0,255), size=0.6)
                 instr = "q: quit | r: start rh | l: start lh | s: save | t: reset"
-                self.show_instructions(instr, datasette_frame, orig=(50,70), color=(0,0,255), size=0.6)
+                self.show_instructions(instr, gray, orig=(50,70), color=(0,0,255), size=0.6)
                 
                 # Show roi
-                cv2.line(datasette_frame, 
-                    (self.position_rois['antenna']['absolute']['topx'], (self.frame_size - self.h)//2),
-                    (self.position_rois['antenna']['absolute']['topx'], self.preview_height - 1 + (self.frame_size - self.h)//2),
+                cv2.line(gray, 
+                    (self.position_rois['antenna']['absolute']['topx'], self.preview_width),
+                    (self.position_rois['antenna']['absolute']['topx'], self.preview_height),
                     (0,255,0),
                     2
                 )
-                cv2.imshow("Hand Position Configurations", datasette_frame)
+                cv2.imshow("Hand Position Configurations", gray)
 
                 # Commands
                 key = cv2.waitKey(1) 
@@ -776,13 +577,6 @@ class DatasetteDepthCapture:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--pdblob', default=PARAMS['PALM_DETECTION_MODEL_PATH'], type=str, 
-                        help="Palm detection blob path")
-    parser.add_argument('--pdth', default=PARAMS['PALM_THRESHOLD'], type=float, help="Palm Detector Threshold")
-    parser.add_argument('--pdnms', default=PARAMS['PALM_NMS_THRESHOLD'], type=float, help="Palm Detector NMS Threshold")
-    parser.add_argument('--lmblob', default=PARAMS['LM_DETECTION_MODEL_PATH'], type=str, 
-                        help="Hand Landmark detection blob path")
-    parser.add_argument('--lmth', default=PARAMS['LM_THRESHOLD'], type=float, help="Landmark Detector Threshold")
     parser.add_argument('--fps', default=PARAMS['FPS'], type=int, help="Capture FPS")
     parser.add_argument('--prwidth', default=PARAMS['PREVIEW_WIDTH'], type=int, help="Preview Width")
     parser.add_argument('--prheight', default=PARAMS['PREVIEW_HEIGHT'], type=int, help="Preview Height")
@@ -807,7 +601,8 @@ if __name__ == "__main__":
             rois = {}
             rois['body'] = pickle.load(fl1)
             rois['antenna'] = pickle.load(fl2)
-            print(rois)
+            for k, v in rois['body'].items(): print(f"{k}: {v}")
+            for k, v in rois['antenna'].items(): print(f"{k}: {v}")        
 
     if rois is None:
         print("ROIs not defined: Please run the previous step for configuration")
@@ -819,11 +614,6 @@ if __name__ == "__main__":
     # Datasette recorder
     datasette = DatasetteDepthCapture(
         queue=messages,
-        pd_path=args.pdblob,
-        pd_score_thresh=args.pdth,
-        pd_nms_thresh=args.pdnms,
-        lm_path=args.lmblob,
-        lm_score_threshold=args.lmth,
         fps=args.fps,
         preview_width=args.prwidth,
         preview_height=args.prheight,
@@ -856,7 +646,7 @@ if __name__ == "__main__":
             print(f"[{ts}]: Reading ROI from file: {filename}")
             with open(filename, "rb") as file:
                 roi = pickle.load(file)
-                print(roi)
+                for k, v in rois['body'].items(): print(f"{k}: {v}")
                 datasette.set_depth_ROI(roi)
         else:
             print(f"[{ts}]: No ROI defined: {filename}")                            
