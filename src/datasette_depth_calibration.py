@@ -28,10 +28,6 @@ import argparse
 import pickle
 import team
 
-# Credits:
-# Hand Tracking Model from: geax
-# https://github.com/geaxgx/depthai_hand_tracker
-
 # Landmarks:
 LM_WRIST = 0
 LM_THUMB_CMC = 1
@@ -95,7 +91,8 @@ PARAMS = {
     'ANTENNA_ROI_FILENAME': 'antenna_position.pkl',
     'ROI_TOLERANCE_BODY_Z': 50,
     'ROI_TOLERANCE_ANTENNA_Z': 5,
-    'ROI_TOLERANCE_ANTENNA_X': 15
+    'ROI_TOLERANCE_ANTENNA_X': 15,
+    'ROI_HAND_ID': 2
 } 
 
 # def to_planar(arr: np.ndarray, shape: tuple) -> list:
@@ -110,7 +107,6 @@ class DatasetteDepthCapture:
             preview_width=640,
             preview_height=400,
             hand_buffer_pixels=20,
-            hand_size=400,
             fps=30, 
             depth_stream_name='depth', 
             cam_resolution='400'
@@ -159,7 +155,6 @@ class DatasetteDepthCapture:
 
         # For capturing hands
         self.hand_buffer_pixels = hand_buffer_pixels
-        self.hand_size = hand_size
         
         # Preview size
         self.preview_width = preview_width
@@ -173,28 +168,6 @@ class DatasetteDepthCapture:
     def create_pipeline_lm(self):
         ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
         print(f"[{ts}]: Creating Pipeline for Landmark Detection ...")
-
-        # Create SSD anchors 
-        # https://github.com/google/mediapipe/blob/master/mediapipe/modules/palm_detection/palm_detection_cpu.pbtxt
-        anchor_options = mpu.SSDAnchorOptions(
-            num_layers=4, 
-            min_scale=0.1484375,
-            max_scale=0.75,
-            input_size_height=128,
-            input_size_width=128,
-            anchor_offset_x=0.5,
-            anchor_offset_y=0.5,
-            strides=[8,16,16,16],
-            aspect_ratios=[1.0],
-            reduce_boxes_in_lowest_layer=False,
-            interpolated_scale_aspect_ratio=1.0,
-            fixed_anchor_size=True
-        )
-        self.anchors = mpu.generate_anchors(anchor_options)
-        self.nb_anchors = self.anchors.shape[0]
-        ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
-        print(f"[{ts}]: {self.nb_anchors} anchors have been created")
-
         # Pipeline
         pipeline = dai.Pipeline()
         pipeline.setOpenVINOVersion(dai.OpenVINO.Version.VERSION_2021_2)
@@ -367,83 +340,62 @@ class DatasetteDepthCapture:
 
                 corners, ids, _ = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
                 _ = aruco.drawDetectedMarkers(gray, corners, ids)
-                
 
-                        # if start_roi:
-                        #     self.lm_transform(region)
-                        #     # Save min and max regions
-                        #     dtx_candidate = np.min(region.lm_xy_y_rescaled[:, 0])
-                        #     dbx_candidate = np.max(region.lm_xy_y_rescaled[:, 0])
-                        #     dty_candidate = np.min(region.lm_xy_y_rescaled[:, 1])
-                        #     dby_candidate = np.max(region.lm_xy_y_rescaled[:, 1])
-                        #     dtx_candidate_a = np.min(region.lm_xy[:, 0])
-                        #     dbx_candidate_a = np.max(region.lm_xy[:, 0])
-                        #     dty_candidate_a = np.min(region.lm_xy[:, 1])
-                        #     dby_candidate_a = np.max(region.lm_xy[:, 1])
-                            
-                        #     # Get rigth hand square enclosure (only right hand)
-                        #     f1 = region.lm_xy[LM_PINKY_TIP,0]
-                        #     f2 = region.lm_xy[LM_THUMB_TIP,0]
-                            
-                        #     if f1 < f2 and right_capture is True:
-                        #         if self.rh_depth_topx > dtx_candidate:
-                        #             self.rh_depth_topx = dtx_candidate
-                        #             rh_tmp_depth_topx = dtx_candidate_a
-                        #         if self.rh_depth_bottomx < dbx_candidate:
-                        #             self.rh_depth_bottomx = dbx_candidate
-                        #             rh_tmp_depth_bottomx = dbx_candidate_a
-                        #         if self.rh_depth_topy > dty_candidate:
-                        #             self.rh_depth_topy = dty_candidate
-                        #             rh_tmp_depth_topy = dty_candidate_a
-                        #         if self.rh_depth_bottomy < dby_candidate:
-                        #             self.rh_depth_bottomy = dby_candidate
-                        #             rh_tmp_depth_bottomy = dby_candidate_a
+                if ids is not None:
+                    for marker, id_ in zip(corners, ids):
+                        if id_ == PARAMS['ROI_HAND_ID']:
+                            if start_roi:
+                                dtx_candidate_a, dty_candidate_a = marker[0,0,0], marker[0,0,1]
+                                dbx_candidate_a, dby_candidate_a = marker[0,2,0], marker[0,2,1]
+                                
+                                dtx_candidate = dtx_candidate_a / self.preview_width
+                                dbx_candidate = dbx_candidate_a / self.preview_width
 
-                        #         # Draw:
-                        #         cv2.rectangle(
-                        #             datasette_frame,
-                        #             (dtx_candidate_a, dty_candidate_a),
-                        #             (dbx_candidate_a, dby_candidate_a),
-                        #             (0, 0, 255),
-                        #             1
-                        #         )
-                        #         cv2.rectangle(
-                        #             datasette_frame,
-                        #             (rh_tmp_depth_topx, rh_tmp_depth_topy),
-                        #             (rh_tmp_depth_bottomx, rh_tmp_depth_bottomy),
-                        #             (0, 0, 255),
-                        #             2
-                        #         )
-                            
-                        #     # Get left hand square enclosure (only left hand)
-                        #     if f1 >= f2 and right_capture is not True:
-                        #         if self.lh_depth_topx > dtx_candidate:
-                        #             self.lh_depth_topx = dtx_candidate
-                        #             lh_tmp_depth_topx = dtx_candidate_a
-                        #         if self.lh_depth_bottomx < dbx_candidate:
-                        #             self.lh_depth_bottomx = dbx_candidate
-                        #             lh_tmp_depth_bottomx = dbx_candidate_a
-                        #         if self.lh_depth_topy > dty_candidate:
-                        #             self.lh_depth_topy = dty_candidate
-                        #             lh_tmp_depth_topy = dty_candidate_a
-                        #         if self.lh_depth_bottomy < dby_candidate:
-                        #             self.lh_depth_bottomy = dby_candidate
-                        #             lh_tmp_depth_bottomy = dby_candidate_a
-                        #         # Draw:
-                        #         cv2.rectangle(
-                        #             datasette_frame,
-                        #             (dtx_candidate_a, dty_candidate_a),
-                        #             (dbx_candidate_a, dby_candidate_a),
-                        #             (255, 0, 0),
-                        #             1
-                        #         )
-                        #         cv2.rectangle(
-                        #             datasette_frame,
-                        #             (lh_tmp_depth_topx, lh_tmp_depth_topy),
-                        #             (lh_tmp_depth_bottomx, lh_tmp_depth_bottomy),
-                        #             (255, 0, 0),
-                        #             2
-                        #         )                                    
+                                dty_candidate = dty_candidate_a / self.preview_height
+                                dby_candidate = dby_candidate_a / self.preview_height
+                                
+                                if right_capture is True:
+                                    if self.rh_depth_topx > dtx_candidate:
+                                        self.rh_depth_topx = dtx_candidate
+                                        rh_tmp_depth_topx = dtx_candidate_a
+                                    if self.rh_depth_bottomx < dbx_candidate:
+                                        self.rh_depth_bottomx = dbx_candidate
+                                        rh_tmp_depth_bottomx = dbx_candidate_a
+                                    if self.rh_depth_topy > dty_candidate:
+                                        self.rh_depth_topy = dty_candidate
+                                        rh_tmp_depth_topy = dty_candidate_a
+                                    if self.rh_depth_bottomy < dby_candidate:
+                                        self.rh_depth_bottomy = dby_candidate
+                                        rh_tmp_depth_bottomy = dby_candidate_a
+                                   
+                                    cv2.rectangle(
+                                        gray,
+                                        (int(rh_tmp_depth_topx), int(rh_tmp_depth_topy)),
+                                        (int(rh_tmp_depth_bottomx), int(rh_tmp_depth_bottomy)),
+                                        (0, 0, 255),
+                                        2
+                                    )
+                                else:
+                                    if self.lh_depth_topx > dtx_candidate:
+                                        self.lh_depth_topx = dtx_candidate
+                                        lh_tmp_depth_topx = dtx_candidate_a
+                                    if self.lh_depth_bottomx < dbx_candidate:
+                                        self.lh_depth_bottomx = dbx_candidate
+                                        lh_tmp_depth_bottomx = dbx_candidate_a
+                                    if self.lh_depth_topy > dty_candidate:
+                                        self.lh_depth_topy = dty_candidate
+                                        lh_tmp_depth_topy = dty_candidate_a
+                                    if self.lh_depth_bottomy < dby_candidate:
+                                        self.lh_depth_bottomy = dby_candidate
+                                        lh_tmp_depth_bottomy = dby_candidate_a
+                                   
+                                    cv2.rectangle(
+                                        gray,
+                                        (int(lh_tmp_depth_topx), int(lh_tmp_depth_topy)),
+                                        (int(lh_tmp_depth_bottomx), int(lh_tmp_depth_bottomy)),
+                                        (255, 0, 0),
+                                        2
+                                    )                                                         
 
                 self.current_fps.display(gray, orig=(50,50), color=(0,0,255), size=0.6)
                 instr = "q: quit | r: start rh | l: start lh | s: save | t: reset"
@@ -451,7 +403,7 @@ class DatasetteDepthCapture:
                 
                 # Show roi
                 cv2.line(gray, 
-                    (self.position_rois['antenna']['absolute']['topx'], self.preview_width),
+                    (self.position_rois['antenna']['absolute']['topx'], 0),
                     (self.position_rois['antenna']['absolute']['topx'], self.preview_height),
                     (0,255,0),
                     2
@@ -536,23 +488,43 @@ class DatasetteDepthCapture:
                 # Get frame
                 in_depth = q_d.get()
                 self.depth_frame = in_depth.getFrame()
+                w, h = self.depth_frame.shape[1], self.depth_frame.shape[0]
                 
                 if self.depth_roi is not None and start_capture is True:
-                    w, h = self.depth_frame.shape[1], self.depth_frame.shape[0]
-                    topx = int(self.depth_roi['topx'] * w)
-                    bottomx = int(self.depth_roi['bottomx'] * w)
-                    topy = int(self.depth_roi['topy'] * h)
-                    bottomy = int(self.depth_roi['bottomy'] * h)
+                    # Left Hand
+                    topx = int(self.depth_roi['left_hand']['topx'] * w)
+                    bottomx = int(self.depth_roi['left_hand']['bottomx'] * w)
+                    topy = int(self.depth_roi['left_hand']['topy'] * h)
+                    bottomy = int(self.depth_roi['left_hand']['bottomy'] * h)
                     dd = self.depth_frame[topy:bottomy+1, topx:bottomx+1]
                     datapoint = {
+                        'hand': 'left',
                         'depth_map': dd,
                         'timestamp': datetime.now(),
                         'frame': frame_number
-                    }
+                    }                    
                     depth_data.append(datapoint)
 
+                    # Right Hand
+                    topx = int(self.depth_roi['right_hand']['topx'] * w)
+                    bottomx = int(self.depth_roi['right_hand']['bottomx'] * w)
+                    topy = int(self.depth_roi['right_hand']['topy'] * h)
+                    bottomy = int(self.depth_roi['right_hand']['bottomy'] * h)
+                    dd = self.depth_frame[topy:bottomy+1, topx:bottomx+1]
+                    datapoint = {
+                        'hand': 'right',
+                        'depth_map': dd,
+                        'timestamp': datetime.now(),
+                        'frame': frame_number
+                    }                    
+                    depth_data.append(datapoint)
+                    
+                    ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
+                    print(f"[{ts}] Saving frame: {frame_number}")
+    
+
                 # Show depth
-                instr = "q: quit | r: start capture | s: save"
+                instr = "q: quit | r: start capture | d: delete | s: save"
                 self.show_depth_map(instr)
                 
                 # Commands
@@ -564,6 +536,13 @@ class DatasetteDepthCapture:
                 if key == ord('r'):
                     # Start depth data 
                     start_capture = True
+
+                if key == ord('d'):
+                    # Start depth data 
+                    ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
+                    print(f"[{ts}] Reset...")
+                    depth_data = []
+                    start_capture = False                    
                     
                 if key == ord('s'):
                     # Save capture
@@ -617,8 +596,7 @@ if __name__ == "__main__":
         fps=args.fps,
         preview_width=args.prwidth,
         preview_height=args.prheight,
-        hand_buffer_pixels=args.pixbuff,
-        hand_size=args.hsize
+        hand_buffer_pixels=args.pixbuff
     )
 
     # The ROIs
@@ -646,10 +624,15 @@ if __name__ == "__main__":
             print(f"[{ts}]: Reading ROI from file: {filename}")
             with open(filename, "rb") as file:
                 roi = pickle.load(file)
-                for k, v in rois['body'].items(): print(f"{k}: {v}")
+                print("---> Left Hand ROI:")
+                for k, v in roi['left_hand'].items(): print(f"{k}: {v}")
+                print("---> Right Hand ROI:")
+                for k, v in roi['right_hand'].items(): print(f"{k}: {v}")
                 datasette.set_depth_ROI(roi)
         else:
-            print(f"[{ts}]: No ROI defined: {filename}")                            
+            print(f"[{ts}]: No ROI defined: {filename}")
+
+        # Start Capture            
         datasette.capture_depth() 
         # Verify if there was data captured and save to file
         if datasette.depth_data is not None and len(datasette.depth_data) > 0:

@@ -480,11 +480,11 @@ class DatasetteROICapture:
                 instr = "q: quit | r: save"
                 self.show_depth_map(sp_data, instr)
 
-                corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
+                corners, ids, _ = aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
                 _ = aruco.drawDetectedMarkers(gray, corners, ids)
                 
                 # Add just the first corner
-                if len(corners) > 0:
+                if ids is not None:
                     marker = corners[0]
                     topx, topy = marker[0,0,0], marker[0,0,1]
                     bottomx, bottomy = marker[0,2,0], marker[0,2,1]
