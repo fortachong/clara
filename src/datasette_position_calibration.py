@@ -486,8 +486,12 @@ class DatasetteROICapture:
                 # Add just the first corner
                 if ids is not None:
                     marker = corners[0]
-                    topx, topy = marker[0,0,0], marker[0,0,1]
-                    bottomx, bottomy = marker[0,2,0], marker[0,2,1]
+                    #topx, topy = marker[0,0,0], marker[0,0,1]
+                    #bottomx, bottomy = marker[0,2,0], marker[0,2,1]
+                    
+                    topx, topy = marker[0,1,0], marker[0,1,1]
+                    bottomx, bottomy = marker[0,3,0], marker[0,3,1]
+                    
                     # Send config for detection
                     theremin_roi_data = {
                         'absolute': {

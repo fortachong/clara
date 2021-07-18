@@ -84,11 +84,15 @@ PARAMS = {
     'DATASET_PATH': 'data/positions',
     'DEPTH_ROI_FILENAME': 'roi.pkl',
     'DEPTH_CAPTURE_FILENAME': 'depth.pkl',
+    'BODY_ROI_FILENAME': 'roi_position.pkl',
+    'ANTENNA_ROI_FILENAME': 'antenna_position.pkl',
+    'BODY_BUFFER': 50,
+    'ANTENNA_BUFFER': 5,
     'DEPTH_RESOLUTION': '400',
-    'INTRINSICS_RIGHT_CX': 636.09185791,
-    'INTRINSICS_RIGHT_CY': 357.98129272,
-    'INTRINSICS_RIGHT_FX': 854.11590576,
-    'INTRINSICS_RIGHT_FY': 854.77392578,
+    'INTRINSICS_RIGHT_CX': 318.04592896,
+    'INTRINSICS_RIGHT_CY': 198.99064636,
+    'INTRINSICS_RIGHT_FX': 427.05795288,
+    'INTRINSICS_RIGHT_FY': 427.38696289,
     'SC_SERVER': '127.0.0.1',
     'SC_PORT': 57121
 } 
@@ -143,6 +147,7 @@ class DepthTheremin:
             fps=30,
             preview_width=640,
             preview_height=400,
+            antenna_roi=None,
             depth_stream_name='depth', 
             depth_threshold_max=700,
             depth_threshold_min=400,
@@ -193,25 +198,55 @@ class DepthTheremin:
         self.preview_width = preview_width
         self.preview_height = preview_height
 
-        # Cloud of coordinates (list of x,y,z coordinates)
-        self.point_cloud = None
-
         # Pipeline
         self.pipeline = None
+
+        # Antenna roi
+        self.antenna_x = 0
+        self.antenna_z = 0
+        self.antenna_roi = antenna_roi
+        # Transform x and y to the same cordinates used
+        if self.antenna_roi is not None:
+            x1 = self.antenna_roi['absolute']['bottomx']
+            self.antenna_z = self.antenna_roi['z']
+            self.antenna_x = ((x1 - PARAMS['INTRINSICS_RIGHT_CX'])*self.antenna_z)/PARAMS['INTRINSICS_RIGHT_FX']
 
     def show_monitor(self, device, frame):
         pass
 
 
     # Show display with depth
-    def show_depth_map(self, instr, topx, topy, bottomx, bottomy):
+    def show_depth_map(
+                    self, 
+                    instr, 
+                    topx1, 
+                    topy1, 
+                    bottomx1, 
+                    bottomy1,
+                    topx2, 
+                    topy2, 
+                    bottomx2, 
+                    bottomy2
+                ):
         if self.depth_frame is not None:
             dframe = self.depth_frame.copy()
             depth_frame_color = cv2.normalize(dframe, None, 255, 0, cv2.NORM_INF, cv2.CV_8UC1)
             depth_frame_color = cv2.equalizeHist(depth_frame_color)
             depth_frame_color = cv2.applyColorMap(depth_frame_color, cv2.COLORMAP_OCEAN)
-            if self.depth_roi is not None:
-                cv2.rectangle(depth_frame_color, (topx, topy), (bottomx, bottomy), (0,0,255),2)
+            
+            # region 1
+            cv2.rectangle(depth_frame_color, (topx1, topy1), (bottomx1, bottomy1), (0,0,255),2)
+            # region 2
+            cv2.rectangle(depth_frame_color, (topx2, topy2), (bottomx2, bottomy2), (0,0,255),2)
+
+            # antenna position
+            if self.antenna_roi is not None:
+                cv2.line(depth_frame_color, 
+                    (self.antenna_roi['absolute']['topx'], 0),
+                    (self.antenna_roi['absolute']['topx'], self.preview_height),
+                    (0,255,0),
+                    2
+                )
 
             self.current_fps.display(depth_frame_color, orig=(50,20), color=(0,0,255), size=0.6)
             self.show_instructions(instr, depth_frame_color, orig=(50,40), color=(0,0,255), size=0.6)
@@ -228,7 +263,7 @@ class DepthTheremin:
             depth_frame_color = cv2.equalizeHist(depth_frame_color)
             depth_frame_color = cv2.applyColorMap(depth_frame_color, cv2.COLORMAP_OCEAN)    
 
-            # Crop rectangle and resize
+            # Crop rectangle (right hand)
             if self.depth_roi is not None:
                 crop_dm = depth_frame_color[topy:bottomy+1, topx:bottomx+1, :].copy()
                 # crop_dm = cv2.resize(crop_dm, (crop_dm.shape[1]*2, crop_dm.shape[0]*2), interpolation=cv2.INTER_AREA)
@@ -294,7 +329,7 @@ class DepthTheremin:
         stereo.setRectifyEdgeFillColor(0) # Black, to better see the cutout
 
         # Median Filter
-        median = dai.StereoDepthProperties.MedianFilter.KERNEL_5x5
+        median = dai.StereoDepthProperties.MedianFilter.KERNEL_7x7
 
         # incomptatible options
         if lr_check or extended or subpixel:
@@ -326,12 +361,43 @@ class DepthTheremin:
             frame_number = 0
             
             if self.depth_roi is not None:
-                # Fixed parameters
-                topx = int(self.depth_roi['topx'] * self.depth_res_w)
-                bottomx = int(self.depth_roi['bottomx'] * self.depth_res_w)
-                topy = int(self.depth_roi['topy'] * self.depth_res_h)
-                bottomy = int(self.depth_roi['bottomy'] * self.depth_res_h)
+                # Fixed parameters right hand
+                topx_rh = int(self.depth_roi['right_hand']['topx'] * self.depth_res_w)
+                bottomx_rh = int(self.depth_roi['right_hand']['bottomx'] * self.depth_res_w)
+                topy_rh = int(self.depth_roi['right_hand']['topy'] * self.depth_res_h)
+                bottomy_rh = int(self.depth_roi['right_hand']['bottomy'] * self.depth_res_h)
+                # Distances x,z
+                c1_rh = (((topx_rh - PARAMS['INTRINSICS_RIGHT_CX']) * self.depth_threshold_min)/PARAMS['INTRINSICS_RIGHT_FX'], self.depth_threshold_min)
+                c2_rh = (((bottomx_rh - PARAMS['INTRINSICS_RIGHT_CX']) * self.depth_threshold_min)/PARAMS['INTRINSICS_RIGHT_FX'], self.depth_threshold_min)
+                c3_rh = (((topx_rh - PARAMS['INTRINSICS_RIGHT_CX']) * self.depth_threshold_max)/PARAMS['INTRINSICS_RIGHT_FX'], self.depth_threshold_max)
+                c4_rh = (((bottomx_rh - PARAMS['INTRINSICS_RIGHT_CX']) * self.depth_threshold_max)/PARAMS['INTRINSICS_RIGHT_FX'], self.depth_threshold_max)
+                d1_rh = np.sqrt((c1_rh[0] - self.antenna_x)**2 + (c1_rh[1] - self.antenna_z)**2)
+                d2_rh = np.sqrt((c2_rh[0] - self.antenna_x)**2 + (c2_rh[1] - self.antenna_z)**2)
+                d3_rh = np.sqrt((c3_rh[0] - self.antenna_x)**2 + (c3_rh[1] - self.antenna_z)**2)
+                d4_rh = np.sqrt((c4_rh[0] - self.antenna_x)**2 + (c4_rh[1] - self.antenna_z)**2)
 
+                dmin_rh = min(d1_rh, d2_rh, d3_rh, d4_rh)
+                dmax_rh = max(d1_rh, d2_rh, d3_rh, d4_rh)
+                ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
+                print(f"[{ts}]: Distances: {d1_rh}, {d2_rh}, {d3_rh}, {d4_rh}")
+                print(f"Min: {dmin_rh}")
+                print(f"Max: {dmax_rh}")
+
+                print(c1_rh)
+                print(c2_rh)
+                print(c3_rh)
+                print(c4_rh)
+
+
+
+                # Fixed parameters left hand
+                topx_lh = int(self.depth_roi['left_hand']['topx'] * self.depth_res_w)
+                bottomx_lh = int(self.depth_roi['left_hand']['bottomx'] * self.depth_res_w)
+                topy_lh = int(self.depth_roi['left_hand']['topy'] * self.depth_res_h)
+                bottomy_lh = int(self.depth_roi['left_hand']['bottomy'] * self.depth_res_h)
+
+                
+                
                 # Display Loop
                 while True:
                     # print(device.getChipTemperature().average)
@@ -340,53 +406,48 @@ class DepthTheremin:
                     # Get frame
                     in_depth = q_d.get()
                     self.depth_frame = in_depth.getFrame()
-                    # Get point cloud
-                    #self.transform_xyz(topx, topy)
-                    #if self.point_cloud is not None:
-                        # Calculates Centroid (x,y), ignore y
-                        # and distance to 0,0 (where ever it is)
-                    #    points_x = np.array(self.point_cloud)[:,0]
-                    #    points_z = np.array(self.point_cloud)[:,2]
-                    #    centroid_x = np.mean(points_x)
-                    #    centroid_z = np.mean(points_z)
-                    #    distance = np.mean(np.sqrt(points_x**2) + np.sqrt(points_z**2))
-                    #    print("----> (x, z) Info:")
-                    #    print(f"----> Centroid X: {centroid_x}")
-                    #    print(f"----> Centroid Z: {centroid_z}")
-                    #    print(f"----> Distance to (0, 0): {distance}")
 
-
-                    # Send data to queue
+                    # Send data to queue (only right hand at the moment)
                     message = {
                         'DATA': 1,
                         'depth': self.depth_frame,
                         'roi': {
-                            'topx': topx,
-                            'topy': topy,
-                            'bottomx': bottomx,
-                            'bottomy': bottomy
+                            'topx': topx_rh,
+                            'topy': topy_rh,
+                            'bottomx': bottomx_rh,
+                            'bottomy': bottomy_rh
                         },
+                        'antenna_x': self.antenna_x,
+                        'antenna_z': self.antenna_z,
                         'depth_threshold_min': self.depth_threshold_min,
                         'depth_threshold_max': self.depth_threshold_max,
+                        'dmin': dmin_rh,
+                        'dmax': dmax_rh
                     }
                     self.queue.put(message)
 
                     # Show depth
                     instr = "q: quit"
-                    self.show_depth_map(instr, topx, topy, bottomx, bottomy)
+                    self.show_depth_map(
+                                    instr, 
+                                    topx_rh, 
+                                    topy_rh, 
+                                    bottomx_rh, 
+                                    bottomy_rh,
+                                    topx_lh, 
+                                    topy_lh, 
+                                    bottomx_lh, 
+                                    bottomy_lh
+                                )
 
                     # Show threshold image
-                    self.show_depth_map_segmentation(topx, topy, bottomx, bottomy)
+                    self.show_depth_map_segmentation(topx_rh, topy_rh, bottomx_rh, bottomy_rh)
                     
                     # Commands
                     key = cv2.waitKey(1) 
                     if key == ord('q') or key == 27:
                         # quit
                         break
-
-                    elif key == 32:
-                        # Pause on space bar
-                        cv2.waitKey(0)
 
 # Create Synth in supercollider 
 class EtherSynth:
@@ -418,12 +479,16 @@ class SynthMessageProcessor(threading.Thread):
             self, 
             queue, 
             synth, 
-            scale
+            scale,
+            adjust_dmin=20,
+            adjust_dmax=500
         ):
         threading.Thread.__init__(self)
         self.synth = synth
         self.queue = queue
         self.active = True
+        self.dmin = adjust_dmin
+        self.dmax = adjust_dmax
 
         # Scale
         self.scale = scale
@@ -436,40 +501,43 @@ class SynthMessageProcessor(threading.Thread):
         if 'DATA' in message:
             self.synth.set_volume(1)
             # Only z
-            zs = get_z(message['depth'], message['depth_threshold_max'], message['depth_threshold_min'])
-            distance = np.mean(zs)
+            #zs = get_z(message['depth'], message['depth_threshold_max'], message['depth_threshold_min'])
+            #distance = np.mean(zs)
             #print(f"----> Centroid Z: {centroid_z}")
 
-            # Point cloud
-            #point_cloud = transform_xyz(
-            #    message['depth'], 
-            #    message['roi']['topx'], 
-            #    message['roi']['topy'], 
-            #    message['depth_threshold_max'],
-            #    message['depth_threshold_min']
-            #)
-            #if point_cloud is not None:
+            points = transform_xyz(
+                message['depth'], 
+                message['roi']['topx'], 
+                message['roi']['topy'], 
+                message['depth_threshold_max'],
+                message['depth_threshold_min']
+            )
+            if points is not None:
                 # Calculates Centroid (x,y), ignore y
-                # and distance to 0,0 (where ever it is)
-            #    points_x = point_cloud[0]
-            #    points_z = point_cloud[2]
-            #    centroid_x = np.mean(points_x)
-            #    centroid_z = np.mean(points_z)
-            #    distance = np.sqrt(centroid_x**2 + centroid_z**2)
-            #    print("----> (x, z) Info:")
-            #    print(f"----> Centroid X: {centroid_x}")
-            #    print(f"----> Centroid Z: {centroid_z}")
-            #    print(f"----> Distance to (0, 0): {distance}")
+                # and distance to Antenna center (kind of)
+                points_x = points[0]
+                points_z = points[2]
+                centroid_x = np.mean(points_x)
+                centroid_z = np.mean(points_z)
+                distance = np.sqrt((centroid_x-message['antenna_x'])**2 + (centroid_z-message['antenna_z'])**2)
+                print(distance)
+                range_ = self.dmax - self.dmin
+                f0 = np.clip(distance, self.dmin, self.dmax) - self.dmin
+                f0 = 1 - f0 / range_
+                print(f0)
+                #print("----> (x, z) Info:")
+                #print(f"----> Centroid (X, Z): ({centroid_x}, {centroid_z})")
+                #print(f"----> Distance to ({self.antenna_x}, {self.antenna_z}): {distance}")
 
                 # process the thresholds
-            rang = message['depth_threshold_max'] - message['depth_threshold_min']
-            f0 = np.clip(distance, message['depth_threshold_min'], message['depth_threshold_max']) - message['depth_threshold_min']
-            f0 = 1 - f0 / rang
-            print(f0)
-            freq = self.scale.from_0_1_to_f(f0)
-            print(freq)
-            # send to synth
-            self.synth.set_tone(freq)
+                #rang = message['depth_threshold_max'] - message['depth_threshold_min']
+                #f0 = np.clip(distance, message['depth_threshold_min'], message['depth_threshold_max']) - message['depth_threshold_min']
+                #f0 = 1 - f0 / rang
+                #print(f0)
+                freq = self.scale.from_0_1_to_f(f0)
+                print(freq)
+                # send to synth
+                self.synth.set_tone(freq)
 
     # Run thread
     def run(self):
@@ -490,20 +558,45 @@ if __name__ == "__main__":
     parser.add_argument("--scport", default=PARAMS['SC_PORT'], type=int,
                         help="Port of Supercollider Server")
     parser.add_argument('--fps', default=PARAMS['FPS'], type=int, help="Capture FPS")
+    parser.add_argument('--antenna', default=PARAMS['ANTENNA_ROI_FILENAME'], type=str, help="ROI of the Theremin antenna")
+    parser.add_argument('--body', default=PARAMS['BODY_ROI_FILENAME'], type=str, help="ROI of body position")
     parser.add_argument('--prwidth', default=PARAMS['PREVIEW_WIDTH'], type=int, help="Preview Width")
     parser.add_argument('--prheight', default=PARAMS['PREVIEW_HEIGHT'], type=int, help="Preview Height")
     args = parser.parse_args()
 
     print(team.banner)
+
+    # Read positon Rois. If rois missing -> go to configuration
+    ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
+    print(f"[{ts}] Reading ROIs...")
+    filename_1 = f"{PARAMS['DATASET_PATH']}/{args.body}"
+    filename_2 = f"{PARAMS['DATASET_PATH']}/{args.antenna}"
+    rois = None
+    with open(filename_1, "rb") as fl1:
+        with open(filename_2, "rb") as fl2:
+            rois = {}
+            rois['body'] = pickle.load(fl1)
+            rois['antenna'] = pickle.load(fl2)
+            for k, v in rois['body'].items(): print(f"{k}: {v}")
+            for k, v in rois['antenna'].items(): print(f"{k}: {v}")        
+
+    if rois is None:
+        print("ROIs not defined: Please run configuration")
+        exit()
+
+
     # Message Queue
     messages = Queue.Queue()
 
-    # Depth Theremin (an attempt)
+    # Depth based Theremin 
     the = DepthTheremin(
         queue=messages,
         fps=args.fps,
         preview_width=args.prwidth,
-        preview_height=args.prheight
+        preview_height=args.prheight,
+        depth_threshold_min=rois['antenna']['z'] + PARAMS['ANTENNA_BUFFER'],
+        depth_threshold_max=rois['body']['z'] - PARAMS['BODY_BUFFER'],
+        antenna_roi=rois['antenna']
     )
 
     # Read ROI from file
@@ -519,7 +612,7 @@ if __name__ == "__main__":
         print(f"[{ts}]: No ROI defined: {filename}")
 
     if the.depth_roi is not None:
-        scale = eqtmp.EqualTempered(octaves=5, start_freq=220, resolution=1000)
+        scale = eqtmp.EqualTempered(octaves=7, start_freq=220, resolution=1000)
         # Create Synthesizer
         synth = EtherSynth(args.scserver, args.scport)
         # Process Thread
@@ -530,3 +623,4 @@ if __name__ == "__main__":
         # quit
         message = {'STOP': 1}
         messages.put(message)
+        cv2.destroyAllWindows()

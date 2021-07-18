@@ -19,7 +19,7 @@ class EqualTempered:
         return f
 
 if __name__ == '__main__':
-    converter = EqualTempered(octaves=1, start_freq=440, resolution=1)
+    converter = EqualTempered(octaves=7, start_freq=220, resolution=1000)
     print(converter.from_0_1_to_f(0))
     print(converter.from_0_1_to_f(0.25))
     print(converter.from_0_1_to_f(0.5))

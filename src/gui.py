@@ -2,6 +2,7 @@ import tkinter as tk
 import os
 from team import banner
 
+# To be done...
 # 1. Calibration - Position
 def cal_step_1():
     pass
