@@ -11,6 +11,7 @@ Configuration Step 1 - Body Position: Press [1]
 Configuration Step 2 - Antenna Position: Press [2]
 Configuration Step 3 - ROIs: Press [3]
 Data capture: Press [4]
+Visualize Configuration: Press [5]
 Press [q] to quit
 
 """
@@ -44,5 +45,7 @@ if __name__ == "__main__":
             prefix = f"c_{dt}"
             subprocess.run(f"python datasette_depth_calibration.py --mode 1 --prefix {prefix}")
 
-
+        # Visualize after configuration
+        if cmd == '5':
+            subprocess.run("python roi_depth_visualizer.py")
         

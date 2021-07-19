@@ -18,8 +18,9 @@ import threading
 import queue as Queue
 import argparse
 import pickle
+import matplotlib.pyplot as plt
+import matplotlib
 import team
-
 
 # Credits:
 # Hand Tracking Model from: geax
@@ -191,13 +192,13 @@ class DepthTheremin:
         self.dmin = adjust_dmin
         self.dmax = adjust_dmax
 
-
-    def transform_xyz(self, topx, topy):
+    def transform_xyz(self, topx, bottomx, topy, bottomy):
         point_cloud = None
         if self.depth_frame is not None:
             dframe = self.depth_frame.copy()
-            filter_cond = (dframe > self.depth_threshold_max) | (dframe < self.depth_threshold_min)
-            dm_frame_filtered_idxs = np.argwhere(~filter_cond)
+            dframe = dframe[topy:bottomy+1, topx:bottomx+1]
+            filter_cond_z = (dframe > self.depth_threshold_max) | (dframe < self.depth_threshold_min)
+            dm_frame_filtered_idxs = np.argwhere(~filter_cond_z)
             point_cloud = xyz_numpy(
                 dframe, 
                 dm_frame_filtered_idxs,
@@ -287,6 +288,56 @@ class DepthTheremin:
             thickness
         )
 
+    def init_plot(
+            self, x, z,
+            centroid_x,
+            centroid_z,
+            min_z, max_z, 
+            antenna_x, antenna_z, 
+            min_x_min_z, max_x_min_z, 
+            min_x_max_z, max_x_max_z
+        ):
+        fig, ax = plt.subplots(figsize=(6, 5))
+        # set limits
+        ax.set_xlim((antenna_x - 150, max_x_min_z + 150))
+        ax.set_ylim((min_z - 100, max_z + 100))
+        # antenna location
+        ax.plot(antenna_x, antenna_z, marker='X', color='b', ms=8)
+        ax.text(antenna_x + 5, antenna_z - 8, 'ANTENNA', color='b', fontsize='large')
+        # draw limiting region
+        x0, x1 = ax.get_xlim()
+        ax.axline((x0, min_z), (x1, min_z), ls='dashed', color='r', linewidth=1.2)
+        ax.axline((x0, max_z), (x1, max_z), ls='dashed', color='r', linewidth=1.2)
+        ax.axline((antenna_x, min_z), (min_x_max_z, max_z), ls='dashed', color='r', linewidth=1.2)
+        ax.axline((max_x_min_z, min_z), (max_x_max_z, max_z), ls='dashed', color='r', linewidth=1.2)
+        ax.set_xlabel("X")
+        ax.set_ylabel("Z")
+        # Random initial plot (will be update every frame)
+        plot = ax.scatter(x, z, marker='+', color='k', s=2.2)
+        centroid_plot = ax.scatter(centroid_x, centroid_z, marker='X', color='r', s=20)
+        # draw the canvas
+        fig.canvas.draw()
+        fig.canvas.flush_events()
+        return fig, ax, plot, centroid_plot
+
+    # Plot
+    def plot(
+            self, 
+            x,
+            z,
+            centroid_x,
+            centroid_z,
+            fig,
+            ax,
+            plot,
+            centroid_plot
+        ):
+        plot.set_offsets(np.stack([x,z], axis=1))
+        centroid_plot.set_offsets(np.array([centroid_x,centroid_z]))
+        fig.canvas.draw()
+        fig.canvas.flush_events()
+        return fig, ax, plot, centroid_plot
+
     # Pipeline for depth
     def create_pipeline_depth(self):
         ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
@@ -345,6 +396,7 @@ class DepthTheremin:
     def capture_depth(self):
         self.pipeline = self.create_pipeline_depth()
         self.check_pipeline()
+
         with dai.Device(self.pipeline) as device:
             ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
             print(f"[{ts}]: Pipeline Started...")
@@ -361,12 +413,21 @@ class DepthTheremin:
                 bottomx_rh = int(self.depth_roi['right_hand']['bottomx'] * self.depth_res_w)
                 topy_rh = int(self.depth_roi['right_hand']['topy'] * self.depth_res_h)
                 bottomy_rh = int(self.depth_roi['right_hand']['bottomy'] * self.depth_res_h)
+                # Get limits
+                min_x_min_z = ((topx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_min)/PARAMS['INTRINSICS_RIGHT_FX']
+                max_x_min_z = ((bottomx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_min)/PARAMS['INTRINSICS_RIGHT_FX']
+                min_x_max_z = ((topx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_max)/PARAMS['INTRINSICS_RIGHT_FX']
+                max_x_max_z = ((bottomx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_max)/PARAMS['INTRINSICS_RIGHT_FX']
+                
                 # Fixed parameters left hand
                 topx_lh = int(self.depth_roi['left_hand']['topx'] * self.depth_res_w)
                 bottomx_lh = int(self.depth_roi['left_hand']['bottomx'] * self.depth_res_w)
                 topy_lh = int(self.depth_roi['left_hand']['topy'] * self.depth_res_h)
                 bottomy_lh = int(self.depth_roi['left_hand']['bottomy'] * self.depth_res_h)
 
+
+                init = False
+                fig = ax = plot = centroid_plot = None
                 # Display Loop
                 while True:
                     # print(device.getChipTemperature().average)
@@ -377,7 +438,7 @@ class DepthTheremin:
                     self.depth_frame = in_depth.getFrame()
                     # Get point cloud
 
-                    pc_rh = self.transform_xyz(topx_rh, topy_rh)
+                    pc_rh = self.transform_xyz(topx_rh, bottomx_rh, topy_rh, bottomy_rh)
                     if pc_rh is not None:
                         # Calculates Centroid (x,y), ignore y
                         # and distance to 0,0 (where ever it is)
@@ -390,7 +451,35 @@ class DepthTheremin:
                         print(f"----> Centroid (X, Z): ({centroid_x}, {centroid_z})")
                         print(f"----> Distance to ({self.antenna_x}, {self.antenna_z}): {distance}")
                         
-                    # Visualize distance
+                        if init:
+                            if fig is not None:
+                                fig, ax, plot, centroid_plot = self.plot(
+                                    points_x,
+                                    points_z,
+                                    centroid_x,
+                                    centroid_z,
+                                    fig,
+                                    ax,
+                                    plot,
+                                    centroid_plot
+                                )
+                        else:
+                            fig, ax, plot, centroid_plot = self.init_plot(
+                                    points_x, points_z,
+                                    centroid_x,
+                                    centroid_z,
+                                    self.depth_threshold_min, self.depth_threshold_max, 
+                                    self.antenna_x, self.antenna_z, 
+                                    min_x_min_z, max_x_min_z, 
+                                    min_x_max_z, max_x_max_z
+                            )
+                            init = True
+ 
+                    if fig is not None:
+                        plot_img = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
+                        plot_img  = plot_img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+                        plot_img = cv2.cvtColor(plot_img, cv2.COLOR_RGB2BGR)
+                        cv2.imshow("plot", plot_img)
 
                     # Show depth
                     instr = "q: quit"

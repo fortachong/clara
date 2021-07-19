@@ -122,12 +122,13 @@ def get_z(frame, depth_threshold_max, depth_threshold_min):
         z = dframe[~filter_cond]
     return z
 
-def transform_xyz(frame, topx, topy, depth_threshold_max, depth_threshold_min):
+def transform_xyz(self, topx, bottomx, topy, bottomy):
     point_cloud = None
-    if frame is not None:
-        dframe = frame.copy()
-        filter_cond = (dframe > depth_threshold_max) | (dframe < depth_threshold_min)
-        dm_frame_filtered_idxs = np.argwhere(~filter_cond)
+    if self.depth_frame is not None:
+        dframe = self.depth_frame.copy()
+        dframe = dframe[topy:bottomy+1, topx:bottomx+1]
+        filter_cond_z = (dframe > self.depth_threshold_max) | (dframe < self.depth_threshold_min)
+        dm_frame_filtered_idxs = np.argwhere(~filter_cond_z)
         point_cloud = xyz_numpy(
             dframe, 
             dm_frame_filtered_idxs,
@@ -137,8 +138,8 @@ def transform_xyz(frame, topx, topy, depth_threshold_max, depth_threshold_min):
             PARAMS['INTRINSICS_RIGHT_CY'],
             PARAMS['INTRINSICS_RIGHT_FX'],
             PARAMS['INTRINSICS_RIGHT_FY']
-        )    
-    return point_cloud
+        )
+        return point_cloud    
 
 class DepthTheremin:
     def __init__(
@@ -388,16 +389,12 @@ class DepthTheremin:
                 print(c3_rh)
                 print(c4_rh)
 
-
-
                 # Fixed parameters left hand
                 topx_lh = int(self.depth_roi['left_hand']['topx'] * self.depth_res_w)
                 bottomx_lh = int(self.depth_roi['left_hand']['bottomx'] * self.depth_res_w)
                 topy_lh = int(self.depth_roi['left_hand']['topy'] * self.depth_res_h)
                 bottomy_lh = int(self.depth_roi['left_hand']['bottomy'] * self.depth_res_h)
 
-                
-                
                 # Display Loop
                 while True:
                     # print(device.getChipTemperature().average)
@@ -520,14 +517,28 @@ class SynthMessageProcessor(threading.Thread):
                 centroid_x = np.mean(points_x)
                 centroid_z = np.mean(points_z)
                 distance = np.sqrt((centroid_x-message['antenna_x'])**2 + (centroid_z-message['antenna_z'])**2)
+                
+                # only x
+                distance = centroid_x-message['antenna_x']
+
                 print(distance)
-                range_ = self.dmax - self.dmin
-                f0 = np.clip(distance, self.dmin, self.dmax) - self.dmin
+
+
+                #range_ = self.dmax - self.dmin
+                #f0 = np.clip(distance, self.dmin, self.dmax) - self.dmin
+                #f0 = 1 - f0 / range_
+                r1 = message['antenna_x']
+                r2 = 1000
+                range_ = r2 - r1
+                f0 = np.clip(distance, r1, r2) - r1
                 f0 = 1 - f0 / range_
+
+
                 print(f0)
                 #print("----> (x, z) Info:")
                 #print(f"----> Centroid (X, Z): ({centroid_x}, {centroid_z})")
                 #print(f"----> Distance to ({self.antenna_x}, {self.antenna_z}): {distance}")
+
 
                 # process the thresholds
                 #rang = message['depth_threshold_max'] - message['depth_threshold_min']
@@ -537,7 +548,7 @@ class SynthMessageProcessor(threading.Thread):
                 freq = self.scale.from_0_1_to_f(f0)
                 print(freq)
                 # send to synth
-                self.synth.set_tone(freq)
+                # self.synth.set_tone(freq)
 
     # Run thread
     def run(self):
@@ -612,7 +623,7 @@ if __name__ == "__main__":
         print(f"[{ts}]: No ROI defined: {filename}")
 
     if the.depth_roi is not None:
-        scale = eqtmp.EqualTempered(octaves=7, start_freq=220, resolution=1000)
+        scale = eqtmp.EqualTempered(octaves=2, start_freq=220, resolution=100)
         # Create Synthesizer
         synth = EtherSynth(args.scserver, args.scport)
         # Process Thread
