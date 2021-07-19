@@ -125,9 +125,10 @@ class DepthTheremin:
             depth_threshold_min=400,
             cam_resolution='400',
             adjust_dmin=20,
-            adjust_dmax=500
+            adjust_dmax=500,
+            show_plot=0
         ):
-        # Message processing queue
+        # Message processing queue (delete)
         self.queue = queue
         # Camera options = 400, 720, 800 for depth
         cam_res = {
@@ -191,6 +192,9 @@ class DepthTheremin:
         # Distances max and min
         self.dmin = adjust_dmin
         self.dmax = adjust_dmax
+
+        # Show visualization
+        self.show_plot = show_plot
 
     def transform_xyz(self, topx, bottomx, topy, bottomy):
         point_cloud = None
@@ -288,6 +292,7 @@ class DepthTheremin:
             thickness
         )
 
+    # Matplotlib plot Initialization
     def init_plot(
             self, x, z,
             centroid_x,
@@ -418,14 +423,13 @@ class DepthTheremin:
                 max_x_min_z = ((bottomx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_min)/PARAMS['INTRINSICS_RIGHT_FX']
                 min_x_max_z = ((topx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_max)/PARAMS['INTRINSICS_RIGHT_FX']
                 max_x_max_z = ((bottomx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_max)/PARAMS['INTRINSICS_RIGHT_FX']
-                
                 # Fixed parameters left hand
                 topx_lh = int(self.depth_roi['left_hand']['topx'] * self.depth_res_w)
                 bottomx_lh = int(self.depth_roi['left_hand']['bottomx'] * self.depth_res_w)
                 topy_lh = int(self.depth_roi['left_hand']['topy'] * self.depth_res_h)
                 bottomy_lh = int(self.depth_roi['left_hand']['bottomy'] * self.depth_res_h)
 
-
+                # Matplotlib plot
                 init = False
                 fig = ax = plot = centroid_plot = None
                 # Display Loop
@@ -451,35 +455,37 @@ class DepthTheremin:
                         print(f"----> Centroid (X, Z): ({centroid_x}, {centroid_z})")
                         print(f"----> Distance to ({self.antenna_x}, {self.antenna_z}): {distance}")
                         
-                        if init:
-                            if fig is not None:
-                                fig, ax, plot, centroid_plot = self.plot(
-                                    points_x,
-                                    points_z,
-                                    centroid_x,
-                                    centroid_z,
-                                    fig,
-                                    ax,
-                                    plot,
-                                    centroid_plot
+                        # Show visualization
+                        if self.show_plot:
+                            if init:
+                                if fig is not None:
+                                    fig, ax, plot, centroid_plot = self.plot(
+                                        points_x,
+                                        points_z,
+                                        centroid_x,
+                                        centroid_z,
+                                        fig,
+                                        ax,
+                                        plot,
+                                        centroid_plot
+                                    )
+                            else:
+                                fig, ax, plot, centroid_plot = self.init_plot(
+                                        points_x, points_z,
+                                        centroid_x,
+                                        centroid_z,
+                                        self.depth_threshold_min, self.depth_threshold_max, 
+                                        self.antenna_x, self.antenna_z, 
+                                        min_x_min_z, max_x_min_z, 
+                                        min_x_max_z, max_x_max_z
                                 )
-                        else:
-                            fig, ax, plot, centroid_plot = self.init_plot(
-                                    points_x, points_z,
-                                    centroid_x,
-                                    centroid_z,
-                                    self.depth_threshold_min, self.depth_threshold_max, 
-                                    self.antenna_x, self.antenna_z, 
-                                    min_x_min_z, max_x_min_z, 
-                                    min_x_max_z, max_x_max_z
-                            )
-                            init = True
- 
-                    if fig is not None:
-                        plot_img = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
-                        plot_img  = plot_img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-                        plot_img = cv2.cvtColor(plot_img, cv2.COLOR_RGB2BGR)
-                        cv2.imshow("plot", plot_img)
+                                init = True
+    
+                            if fig is not None:
+                                plot_img = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
+                                plot_img  = plot_img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+                                plot_img = cv2.cvtColor(plot_img, cv2.COLOR_RGB2BGR)
+                                cv2.imshow("plot", plot_img)
 
                     # Show depth
                     instr = "q: quit"
@@ -514,6 +520,7 @@ if __name__ == "__main__":
     parser.add_argument('--prheight', default=PARAMS['PREVIEW_HEIGHT'], type=int, help="Preview Height")
     parser.add_argument('--antenna', default=PARAMS['ANTENNA_ROI_FILENAME'], type=str, help="ROI of the Theremin antenna")
     parser.add_argument('--body', default=PARAMS['BODY_ROI_FILENAME'], type=str, help="ROI of body position")
+    parser.add_argument('--plot', default=0, type=int, help="Show visualization in real time")
     args = parser.parse_args()
 
     print(team.banner)
@@ -547,7 +554,8 @@ if __name__ == "__main__":
         preview_height=args.prheight,
         depth_threshold_min=rois['antenna']['z'] + PARAMS['ANTENNA_BUFFER'],
         depth_threshold_max=rois['body']['z'] - PARAMS['BODY_BUFFER'],
-        antenna_roi=rois['antenna']
+        antenna_roi=rois['antenna'],
+        show_plot=args.plot
     )
 
     # Read ROI from file
