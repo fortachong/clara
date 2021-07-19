@@ -1,3 +1,5 @@
+import depthai as dai
+
 # Landmarks:
 LM_WRIST = 0
 LM_THUMB_CMC = 1
@@ -56,5 +58,13 @@ PARAMS = {
     'DATASET_PATH': 'data/positions',
     'DEPTH_ROI_FILENAME': 'roi.pkl',
     'DEPTH_CAPTURE_FILENAME': 'depth.pkl',
-    'DEPTH_RESOLUTION': '400'
+    'BODY_ROI_FILENAME': 'roi_position.pkl',
+    'ANTENNA_ROI_FILENAME': 'antenna_position.pkl',
+    'BODY_BUFFER': 50,
+    'ANTENNA_BUFFER': 5,
+    'DEPTH_RESOLUTION': '400',
+    'INTRINSICS_RIGHT_CX': 318.04592896,
+    'INTRINSICS_RIGHT_CY': 198.99064636,
+    'INTRINSICS_RIGHT_FX': 427.05795288,
+    'INTRINSICS_RIGHT_FY': 427.38696289
 } 

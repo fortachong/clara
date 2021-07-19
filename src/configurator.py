@@ -6,16 +6,19 @@ from team import banner
 # Use aruco markers
 
 menu = """
-Welcome to Ether theremin tools
-Configuration Step 1 - Body Position: Press [1]
-Configuration Step 2 - Antenna Position: Press [2]
-Configuration Step 3 - ROIs: Press [3]
-Data capture: Press [4]
-Visualize Configuration: Press [5]
+** Ether theremin tools **
+
+Show Configuration: [c]
+Configuration Step 1 - Body Position: [1]
+Configuration Step 2 - Antenna Position: [2]
+Configuration Step 3 - ROIs: [3]
+Data capture: [4]
+Run: [5]
+Run with Visualization: [6]
 Press [q] to quit
 
 """
-cmds = ['1', '2', '3', '4']
+cmds = ['1', '2', '3', '4', '5', '6', 'c']
 if __name__ == "__main__":
     print(banner)
     while True:
@@ -27,6 +30,16 @@ if __name__ == "__main__":
         if cmd not in cmds:
             print("Command not recognized")
 
+        # Configuration Step 1: Body position
+        if cmd == 'c':
+            # Show Configuration:
+            # Intrinsics (Right Matrix)
+            # ROI files (body, antenna, hands)
+            # Conversions
+            # Depth min and max
+            # Map (matplotlib)
+            subprocess.run("python show_config.py")
+            
         # Configuration Step 1: Body position
         if cmd == '1':
             subprocess.run("python datasette_position_calibration.py --mode 0")
@@ -45,7 +58,10 @@ if __name__ == "__main__":
             prefix = f"c_{dt}"
             subprocess.run(f"python datasette_depth_calibration.py --mode 1 --prefix {prefix}")
 
-        # Visualize after configuration
+        # Run
         if cmd == '5':
-            subprocess.run("python roi_depth_visualizer.py")
-        
+            subprocess.run("python roi_depth_visualizer.py --plot=0")
+
+        # Visualization
+        if cmd == '6':
+            subprocess.run("python roi_depth_visualizer.py --plot=1")

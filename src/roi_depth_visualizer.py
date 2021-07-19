@@ -518,6 +518,7 @@ if __name__ == "__main__":
     parser.add_argument('--fps', default=PARAMS['FPS'], type=int, help="Capture FPS")
     parser.add_argument('--prwidth', default=PARAMS['PREVIEW_WIDTH'], type=int, help="Preview Width")
     parser.add_argument('--prheight', default=PARAMS['PREVIEW_HEIGHT'], type=int, help="Preview Height")
+    parser.add_argument('--res', default=PARAMS['DEPTH_RESOLUTION'], type=int, help="Depth Resolution used")
     parser.add_argument('--antenna', default=PARAMS['ANTENNA_ROI_FILENAME'], type=str, help="ROI of the Theremin antenna")
     parser.add_argument('--body', default=PARAMS['BODY_ROI_FILENAME'], type=str, help="ROI of body position")
     parser.add_argument('--plot', default=0, type=int, help="Show visualization in real time")
@@ -552,6 +553,7 @@ if __name__ == "__main__":
         fps=args.fps,
         preview_width=args.prwidth,
         preview_height=args.prheight,
+        cam_resolution=args.res,
         depth_threshold_min=rois['antenna']['z'] + PARAMS['ANTENNA_BUFFER'],
         depth_threshold_max=rois['body']['z'] - PARAMS['BODY_BUFFER'],
         antenna_roi=rois['antenna'],
