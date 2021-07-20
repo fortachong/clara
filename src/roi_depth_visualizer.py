@@ -148,6 +148,7 @@ class DepthTheremin:
                     800
                 )
         }
+        cam_resolution = str(cam_resolution)
         self.depth_mono_resolution_left = cam_res[cam_resolution][0]
         self.depth_mono_resolution_right = cam_res[cam_resolution][0]
         self.depth_res_w = cam_res[cam_resolution][1]
@@ -485,6 +486,7 @@ class DepthTheremin:
                                 plot_img = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
                                 plot_img  = plot_img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
                                 plot_img = cv2.cvtColor(plot_img, cv2.COLOR_RGB2BGR)
+                                plot_img = cv2.putText(plot_img, f"Distance = {distance}", (10,40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
                                 cv2.imshow("plot", plot_img)
 
                     # Show depth
