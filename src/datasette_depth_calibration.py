@@ -26,6 +26,7 @@ from FPS import FPS
 import queue as Queue
 import argparse
 import pickle
+import config
 import team
 
 # Landmarks:
@@ -51,49 +52,51 @@ LM_PINKY_PIP = 18
 LM_PINKY_DIP = 19
 LM_PINKY_TIP = 20
 
-# Parameters
-PARAMS = {
-    'CAPTURE_DEVICE': 0,
-    'KEY_QUIT': 'q',
-    'HUD_COLOR': (153,219,112),
-    'LANDMARKS_COLOR': (0,255,0),
-    'LANDMARKS': [
-                    LM_WRIST, 
-                    LM_THUMB_TIP, 
-                    LM_INDEX_FINGER_TIP, 
-                    LM_MIDDLE_FINGER_TIP,
-                    LM_RING_FINGER_TIP,
-                    LM_PINKY_TIP
-                ],
+# # Parameters
+# PARAMS = {
+#     'CAPTURE_DEVICE': 0,
+#     'KEY_QUIT': 'q',
+#     'HUD_COLOR': (153,219,112),
+#     'LANDMARKS_COLOR': (0,255,0),
+#     'LANDMARKS': [
+#                     LM_WRIST, 
+#                     LM_THUMB_TIP, 
+#                     LM_INDEX_FINGER_TIP, 
+#                     LM_MIDDLE_FINGER_TIP,
+#                     LM_RING_FINGER_TIP,
+#                     LM_PINKY_TIP
+#                 ],
 
-    'VIDEO_RESOLUTION': dai.ColorCameraProperties.SensorResolution.THE_1080_P,
-    'PALM_DETECTION_MODEL_PATH': "models/palm_detection.blob",
-    'PALM_THRESHOLD': 0.5,
-    'PALM_NMS_THRESHOLD': 0.3,
-    'PALM_DETECTION_INPUT_LENGTH': 128,
-    'LM_DETECTION_MODEL_PATH': "models/hand_landmark.blob",
-    'LM_THRESHOLD': 0.5,
-    'LM_INPUT_LENGTH': 224,
-    'FPS': 2,
-    'ROI_DP_LOWER_TH': 100,
-    'ROI_DP_UPPER_TH': 10000,
-    'INITIAL_ROI_TL': dai.Point2f(0.4, 0.4),
-    'INITIAL_ROI_BR': dai.Point2f(0.6, 0.6),
-    'PREVIEW_WIDTH': 640,
-    'PREVIEW_HEIGHT': 400,
-    'HAND_BUFFER_PIXELS': 20,
-    'HAND_SIZE': 400,
-    'DATASET_PATH': 'data/positions',
-    'DEPTH_ROI_FILENAME': 'roi.pkl',
-    'DEPTH_CAPTURE_FILENAME': 'depth_capture.pkl',
-    'DEPTH_RESOLUTION': '400',
-    'BODY_ROI_FILENAME': 'roi_position.pkl',
-    'ANTENNA_ROI_FILENAME': 'antenna_position.pkl',
-    'ROI_TOLERANCE_BODY_Z': 50,
-    'ROI_TOLERANCE_ANTENNA_Z': 5,
-    'ROI_TOLERANCE_ANTENNA_X': 15,
-    'ROI_HAND_ID': 2
-} 
+#     'VIDEO_RESOLUTION': dai.ColorCameraProperties.SensorResolution.THE_1080_P,
+#     'PALM_DETECTION_MODEL_PATH': "models/palm_detection.blob",
+#     'PALM_THRESHOLD': 0.5,
+#     'PALM_NMS_THRESHOLD': 0.3,
+#     'PALM_DETECTION_INPUT_LENGTH': 128,
+#     'LM_DETECTION_MODEL_PATH': "models/hand_landmark.blob",
+#     'LM_THRESHOLD': 0.5,
+#     'LM_INPUT_LENGTH': 224,
+#     'FPS': 2,
+#     'ROI_DP_LOWER_TH': 100,
+#     'ROI_DP_UPPER_TH': 10000,
+#     'INITIAL_ROI_TL': dai.Point2f(0.4, 0.4),
+#     'INITIAL_ROI_BR': dai.Point2f(0.6, 0.6),
+#     'PREVIEW_WIDTH': 640,
+#     'PREVIEW_HEIGHT': 400,
+#     'HAND_BUFFER_PIXELS': 20,
+#     'HAND_SIZE': 400,
+#     'DATASET_PATH': 'data/positions',
+#     'DEPTH_ROI_FILENAME': 'roi.pkl',
+#     'DEPTH_CAPTURE_FILENAME': 'depth_capture.pkl',
+#     'DEPTH_RESOLUTION': '400',
+#     'BODY_ROI_FILENAME': 'roi_position.pkl',
+#     'ANTENNA_ROI_FILENAME': 'antenna_position.pkl',
+#     'ROI_TOLERANCE_BODY_Z': 50,
+#     'ROI_TOLERANCE_ANTENNA_Z': 5,
+#     'ROI_TOLERANCE_ANTENNA_X': 15,
+#     'ROI_HAND_ID': 2
+# } 
+
+PARAMS = config.PARAMS
 
 # def to_planar(arr: np.ndarray, shape: tuple) -> list:
 def to_planar(arr: np.ndarray, shape: tuple) -> np.ndarray:

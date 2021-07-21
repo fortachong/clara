@@ -501,8 +501,10 @@ class DatasetteHandCapture:
                             #                    0,
                             #                    0,
                             #                    cv2.BORDER_CONSTANT
-                            #                )
-                            datasette_hand = cv2.resize(chand, (datasette_hand.shape[1],datasette_hand.shape[0]))
+                            #
+                            #                 )
+                            
+                            #datasette_hand = cv2.resize(chand, (datasette_hand.shape[1],datasette_hand.shape[0]))
                             # send data message
                             message = {
                                 'DATA': 1,

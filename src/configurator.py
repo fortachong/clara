@@ -52,7 +52,7 @@ if __name__ == "__main__":
         if cmd == '3':
             subprocess.run("python datasette_depth_calibration.py --mode 0")
 
-        # Configuration Step 3: Configure ROIs
+        # Capture data
         if cmd == '4':
             dt = datetime.now().strftime("%Y_%d_%m_%H_%M_%S")
             prefix = f"c_{dt}"

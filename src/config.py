@@ -62,9 +62,30 @@ PARAMS = {
     'ANTENNA_ROI_FILENAME': 'antenna_position.pkl',
     'BODY_BUFFER': 50,
     'ANTENNA_BUFFER': 5,
+    'ROI_HAND_ID': 2,
+    'DEPTH_CAMERA_RESOLUTIONS': {
+        '400': (
+                dai.MonoCameraProperties.SensorResolution.THE_400_P,
+                640,
+                400
+            ),
+        '720': (
+                dai.MonoCameraProperties.SensorResolution.THE_720_P,
+                1280,
+                720
+            ),
+        '800': (
+                dai.MonoCameraProperties.SensorResolution.THE_800_P,
+                1280,
+                800
+            )
+    },
     'DEPTH_RESOLUTION': '400',
     'INTRINSICS_RIGHT_CX': 318.04592896,
     'INTRINSICS_RIGHT_CY': 198.99064636,
     'INTRINSICS_RIGHT_FX': 427.05795288,
-    'INTRINSICS_RIGHT_FY': 427.38696289
+    'INTRINSICS_RIGHT_FY': 427.38696289,
+    'SC_SERVER': '127.0.0.1',
+    'SC_PORT': 57121
 } 
+

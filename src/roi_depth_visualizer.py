@@ -20,89 +20,13 @@ import argparse
 import pickle
 import matplotlib.pyplot as plt
 import matplotlib
+import config
 import team
 
-# Credits:
-# Hand Tracking Model from: geax
-# https://github.com/geaxgx/depthai_hand_tracker
-
-# Landmarks:
-LM_WRIST = 0
-LM_THUMB_CMC = 1
-LM_THUMB_MCP = 2
-LM_THUMB_IP = 3
-LM_THUMB_TIP = 4
-LM_INDEX_FINGER_MCP = 5
-LM_INDEX_FINGER_PIP = 6
-LM_INDEX_FINGER_DIP = 7
-LM_INDEX_FINGER_TIP = 8
-LM_MIDDLE_FINGER_MCP = 9
-LM_MIDDLE_FINGER_PIP = 10
-LM_MIDDLE_FINGER_DIP = 11
-LM_MIDDLE_FINGER_TIP = 12
-LM_RING_FINGER_MCP = 13
-LM_RING_FINGER_PIP = 14
-LM_RING_FINGER_DIP = 15
-LM_RING_FINGER_TIP = 16
-LM_PINKY_MCP = 17
-LM_PINKY_PIP = 18
-LM_PINKY_DIP = 19
-LM_PINKY_TIP = 20
-
 # Parameters
-PARAMS = {
-    'CAPTURE_DEVICE': 0,
-    'KEY_QUIT': 'q',
-    'HUD_COLOR': (153,219,112),
-    'LANDMARKS_COLOR': (0,255,0),
-    'LANDMARKS': [
-                    LM_WRIST, 
-                    LM_THUMB_TIP, 
-                    LM_INDEX_FINGER_TIP, 
-                    LM_MIDDLE_FINGER_TIP,
-                    LM_RING_FINGER_TIP,
-                    LM_PINKY_TIP
-                ],
+PARAMS = config.PARAMS
 
-    'VIDEO_RESOLUTION': dai.ColorCameraProperties.SensorResolution.THE_1080_P,
-    'PALM_DETECTION_MODEL_PATH': "models/palm_detection.blob",
-    'PALM_THRESHOLD': 0.5,
-    'PALM_NMS_THRESHOLD': 0.3,
-    'PALM_DETECTION_INPUT_LENGTH': 128,
-    'LM_DETECTION_MODEL_PATH': "models/hand_landmark.blob",
-    'LM_THRESHOLD': 0.5,
-    'LM_INPUT_LENGTH': 224,
-    'FPS': 2,
-    'ROI_DP_LOWER_TH': 100,
-    'ROI_DP_UPPER_TH': 10000,
-    'INITIAL_ROI_TL': dai.Point2f(0.4, 0.4),
-    'INITIAL_ROI_BR': dai.Point2f(0.6, 0.6),
-    'PREVIEW_WIDTH': 640,
-    'PREVIEW_HEIGHT': 400,
-    'HAND_BUFFER_PIXELS': 20,
-    'HAND_SIZE': 400,
-    'DATASET_PATH': 'data/positions',
-    'DEPTH_ROI_FILENAME': 'roi.pkl',
-    'DEPTH_CAPTURE_FILENAME': 'depth.pkl',
-    'BODY_ROI_FILENAME': 'roi_position.pkl',
-    'ANTENNA_ROI_FILENAME': 'antenna_position.pkl',
-    'BODY_BUFFER': 50,
-    'ANTENNA_BUFFER': 5,
-    'DEPTH_RESOLUTION': '400',
-    'INTRINSICS_RIGHT_CX': 318.04592896,
-    'INTRINSICS_RIGHT_CY': 198.99064636,
-    'INTRINSICS_RIGHT_FX': 427.05795288,
-    'INTRINSICS_RIGHT_FY': 427.38696289
-} 
-
-def xyz_numpy(frame, idxs, topx, topy, cx, cy, fx, fy):
-    u = idxs[:,1]
-    v = idxs[:,0]
-    z = frame[v,u]
-    x = ((u + topx - cx)*z)/fx
-    y = ((v + topy - cy)*z)/fy
-    return x, y, z
-
+# Get xyz coordinates from depth frame
 def xyz(frame, idxs, topx, topy, cx, cy, fx, fy):
     xyz_c = []
     for v, u in idxs:
@@ -112,6 +36,16 @@ def xyz(frame, idxs, topx, topy, cx, cy, fx, fy):
         xyz_c.append([x,y,z])
     return xyz_c
 
+# Numpy version
+def xyz_numpy(frame, idxs, topx, topy, cx, cy, fx, fy):
+    u = idxs[:,1]
+    v = idxs[:,0]
+    z = frame[v,u]
+    x = ((u + topx - cx)*z)/fx
+    y = ((v + topy - cy)*z)/fy
+    return x, y, z
+
+# Class implementing the OAKD pipeline
 class DepthTheremin:
     def __init__(
             self, 
@@ -131,23 +65,7 @@ class DepthTheremin:
         # Message processing queue (delete)
         self.queue = queue
         # Camera options = 400, 720, 800 for depth
-        cam_res = {
-            '400': (
-                    dai.MonoCameraProperties.SensorResolution.THE_400_P,
-                    640,
-                    400
-                ),
-            '720': (
-                    dai.MonoCameraProperties.SensorResolution.THE_720_P,
-                    1280,
-                    720
-                ),
-            '800': (
-                    dai.MonoCameraProperties.SensorResolution.THE_800_P,
-                    1280,
-                    800
-                )
-        }
+        cam_res = PARAMS['DEPTH_CAMERA_RESOLUTIONS']
         cam_resolution = str(cam_resolution)
         self.depth_mono_resolution_left = cam_res[cam_resolution][0]
         self.depth_mono_resolution_right = cam_res[cam_resolution][0]
@@ -197,12 +115,16 @@ class DepthTheremin:
         # Show visualization
         self.show_plot = show_plot
 
+    # Transform a region defined by topx, bottomx, topy, bottomy as a point cloud
     def transform_xyz(self, topx, bottomx, topy, bottomy):
         point_cloud = None
         if self.depth_frame is not None:
             dframe = self.depth_frame.copy()
+            # Limit the region
             dframe = dframe[topy:bottomy+1, topx:bottomx+1]
+            # filter z
             filter_cond_z = (dframe > self.depth_threshold_max) | (dframe < self.depth_threshold_min)
+            # ids of the filtered dframe
             dm_frame_filtered_idxs = np.argwhere(~filter_cond_z)
             point_cloud = xyz_numpy(
                 dframe, 
@@ -253,7 +175,7 @@ class DepthTheremin:
             self.show_instructions(instr, depth_frame_color, orig=(50,40), color=(0,0,255), size=0.6)
             cv2.imshow(self.depth_stream_name, depth_frame_color)
 
-    # Show display with depth
+    # Show only the segmented region
     def show_depth_map_segmentation(self, topx, topy, bottomx, bottomy):
         if self.depth_frame is not None:
             dframe = self.depth_frame.copy()
@@ -270,7 +192,7 @@ class DepthTheremin:
                 # crop_dm = cv2.resize(crop_dm, (crop_dm.shape[1]*2, crop_dm.shape[0]*2), interpolation=cv2.INTER_AREA)
                 cv2.imshow('thresholded', crop_dm)
 
-    # Set ROI 
+    # Set ROI (left and right hand)
     def set_ROI(self, roi):
         self.depth_roi = roi
 
@@ -411,32 +333,34 @@ class DepthTheremin:
             q_d = device.getOutputQueue(name=self.depth_stream_name, maxSize=4, blocking=False)
             # current_fps
             self.current_fps = FPS(mean_nb_frames=20)
-            frame_number = 0
             
+            # define inline function to get coordinates in mm and px
+            x_coordinate_mm = lambda x, z: ((x - PARAMS['INTRINSICS_RIGHT_CX'])*z)/PARAMS['INTRINSICS_RIGHT_FX']
+            x_coordinate_px = lambda x: int(x * self.depth_res_w)
+            y_coordinate_px = lambda y: int(y * self.depth_res_h)
+
             if self.depth_roi is not None:
                 # Fixed parameters right hand
-                topx_rh = int(self.depth_roi['right_hand']['topx'] * self.depth_res_w)
-                bottomx_rh = int(self.depth_roi['right_hand']['bottomx'] * self.depth_res_w)
-                topy_rh = int(self.depth_roi['right_hand']['topy'] * self.depth_res_h)
-                bottomy_rh = int(self.depth_roi['right_hand']['bottomy'] * self.depth_res_h)
+                topx_rh = x_coordinate_px(self.depth_roi['right_hand']['topx'])
+                bottomx_rh = x_coordinate_px(self.depth_roi['right_hand']['bottomx']) 
+                topy_rh = y_coordinate_px(self.depth_roi['right_hand']['topy'])
+                bottomy_rh = y_coordinate_px(self.depth_roi['right_hand']['bottomy'])           
                 # Get limits
-                min_x_min_z = ((topx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_min)/PARAMS['INTRINSICS_RIGHT_FX']
-                max_x_min_z = ((bottomx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_min)/PARAMS['INTRINSICS_RIGHT_FX']
-                min_x_max_z = ((topx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_max)/PARAMS['INTRINSICS_RIGHT_FX']
-                max_x_max_z = ((bottomx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_max)/PARAMS['INTRINSICS_RIGHT_FX']
+                min_x_min_z_rh = x_coordinate_mm(topx_rh, self.depth_threshold_min)
+                max_x_min_z_rh = x_coordinate_mm(bottomx_rh, self.depth_threshold_min)
+                min_x_max_z_rh = x_coordinate_mm(topx_rh, self.depth_threshold_max)
+                max_x_max_z_rh = x_coordinate_mm(bottomx_rh, self.depth_threshold_max) 
                 # Fixed parameters left hand
-                topx_lh = int(self.depth_roi['left_hand']['topx'] * self.depth_res_w)
-                bottomx_lh = int(self.depth_roi['left_hand']['bottomx'] * self.depth_res_w)
-                topy_lh = int(self.depth_roi['left_hand']['topy'] * self.depth_res_h)
-                bottomy_lh = int(self.depth_roi['left_hand']['bottomy'] * self.depth_res_h)
+                topx_lh = x_coordinate_px(self.depth_roi['left_hand']['topx'])
+                bottomx_lh = x_coordinate_px(self.depth_roi['left_hand']['bottomx']) 
+                topy_lh = y_coordinate_px(self.depth_roi['left_hand']['topy'])
+                bottomy_lh = y_coordinate_px(self.depth_roi['left_hand']['bottomy'])           
 
                 # Matplotlib plot
                 init = False
                 fig = ax = plot = centroid_plot = None
                 # Display Loop
                 while True:
-                    # print(device.getChipTemperature().average)
-                    frame_number += 1
                     self.current_fps.update()
                     # Get frame
                     in_depth = q_d.get()
@@ -477,13 +401,13 @@ class DepthTheremin:
                                         centroid_z,
                                         self.depth_threshold_min, self.depth_threshold_max, 
                                         self.antenna_x, self.antenna_z, 
-                                        min_x_min_z, max_x_min_z, 
-                                        min_x_max_z, max_x_max_z
+                                        min_x_min_z_rh, max_x_min_z_rh, 
+                                        min_x_max_z_rh, max_x_max_z_rh
                                 )
                                 init = True
     
                             if fig is not None:
-                                plot_img = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
+                                plot_img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
                                 plot_img  = plot_img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
                                 plot_img = cv2.cvtColor(plot_img, cv2.COLOR_RGB2BGR)
                                 plot_img = cv2.putText(plot_img, f"Distance = {distance}", (10,40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)

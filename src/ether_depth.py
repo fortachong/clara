@@ -20,91 +20,12 @@ import threading
 import queue as Queue
 import argparse
 import pickle
+import config
 import team
 
-# Credits:
-# Hand Tracking Model from: geax
-# https://github.com/geaxgx/depthai_hand_tracker
+PARAMS = config.PARAMS
 
-# Landmarks:
-LM_WRIST = 0
-LM_THUMB_CMC = 1
-LM_THUMB_MCP = 2
-LM_THUMB_IP = 3
-LM_THUMB_TIP = 4
-LM_INDEX_FINGER_MCP = 5
-LM_INDEX_FINGER_PIP = 6
-LM_INDEX_FINGER_DIP = 7
-LM_INDEX_FINGER_TIP = 8
-LM_MIDDLE_FINGER_MCP = 9
-LM_MIDDLE_FINGER_PIP = 10
-LM_MIDDLE_FINGER_DIP = 11
-LM_MIDDLE_FINGER_TIP = 12
-LM_RING_FINGER_MCP = 13
-LM_RING_FINGER_PIP = 14
-LM_RING_FINGER_DIP = 15
-LM_RING_FINGER_TIP = 16
-LM_PINKY_MCP = 17
-LM_PINKY_PIP = 18
-LM_PINKY_DIP = 19
-LM_PINKY_TIP = 20
-
-# Parameters
-PARAMS = {
-    'CAPTURE_DEVICE': 0,
-    'KEY_QUIT': 'q',
-    'HUD_COLOR': (153,219,112),
-    'LANDMARKS_COLOR': (0,255,0),
-    'LANDMARKS': [
-                    LM_WRIST, 
-                    LM_THUMB_TIP, 
-                    LM_INDEX_FINGER_TIP, 
-                    LM_MIDDLE_FINGER_TIP,
-                    LM_RING_FINGER_TIP,
-                    LM_PINKY_TIP
-                ],
-
-    'VIDEO_RESOLUTION': dai.ColorCameraProperties.SensorResolution.THE_1080_P,
-    'PALM_DETECTION_MODEL_PATH': "models/palm_detection.blob",
-    'PALM_THRESHOLD': 0.5,
-    'PALM_NMS_THRESHOLD': 0.3,
-    'PALM_DETECTION_INPUT_LENGTH': 128,
-    'LM_DETECTION_MODEL_PATH': "models/hand_landmark.blob",
-    'LM_THRESHOLD': 0.5,
-    'LM_INPUT_LENGTH': 224,
-    'FPS': 2,
-    'ROI_DP_LOWER_TH': 100,
-    'ROI_DP_UPPER_TH': 10000,
-    'INITIAL_ROI_TL': dai.Point2f(0.4, 0.4),
-    'INITIAL_ROI_BR': dai.Point2f(0.6, 0.6),
-    'PREVIEW_WIDTH': 640,
-    'PREVIEW_HEIGHT': 400,
-    'HAND_BUFFER_PIXELS': 20,
-    'HAND_SIZE': 400,
-    'DATASET_PATH': 'data/positions',
-    'DEPTH_ROI_FILENAME': 'roi.pkl',
-    'DEPTH_CAPTURE_FILENAME': 'depth.pkl',
-    'BODY_ROI_FILENAME': 'roi_position.pkl',
-    'ANTENNA_ROI_FILENAME': 'antenna_position.pkl',
-    'BODY_BUFFER': 50,
-    'ANTENNA_BUFFER': 5,
-    'DEPTH_RESOLUTION': '400',
-    'INTRINSICS_RIGHT_CX': 318.04592896,
-    'INTRINSICS_RIGHT_CY': 198.99064636,
-    'INTRINSICS_RIGHT_FX': 427.05795288,
-    'INTRINSICS_RIGHT_FY': 427.38696289,
-    'SC_SERVER': '127.0.0.1',
-    'SC_PORT': 57121
-} 
-
-def xyz_numpy(frame, idxs, topx, topy, cx, cy, fx, fy):
-    u = idxs[:,1]
-    v = idxs[:,0]
-    z = frame[v,u]
-    x = ((u + topx - cx)*z)/fx
-    y = ((v + topy - cy)*z)/fy
-    return x, y, z
-
+# xyz coordinates from depth map
 def xyz(frame, idxs, topx, topy, cx, cy, fx, fy):
     xyz_c = []
     for v, u in idxs:
@@ -114,6 +35,15 @@ def xyz(frame, idxs, topx, topy, cx, cy, fx, fy):
         xyz_c.append([x,y,z])
     return xyz_c
 
+# Numpy version
+def xyz_numpy(frame, idxs, topx, topy, cx, cy, fx, fy):
+    u = idxs[:,1]
+    v = idxs[:,0]
+    z = frame[v,u]
+    x = ((u + topx - cx)*z)/fx
+    y = ((v + topy - cy)*z)/fy
+    return x, y, z    
+
 def get_z(frame, depth_threshold_max, depth_threshold_min):
     z = None
     if frame is not None:
@@ -122,12 +52,23 @@ def get_z(frame, depth_threshold_max, depth_threshold_min):
         z = dframe[~filter_cond]
     return z
 
-def transform_xyz(self, topx, bottomx, topy, bottomy):
+def transform_xyz(
+        depth_frame, 
+        topx, 
+        bottomx, 
+        topy, 
+        bottomy, 
+        depth_threshold_min, 
+        depth_threshold_max
+    ):
     point_cloud = None
-    if self.depth_frame is not None:
-        dframe = self.depth_frame.copy()
+    if depth_frame is not None:
+        dframe = depth_frame.copy()
+        # Limit the region
         dframe = dframe[topy:bottomy+1, topx:bottomx+1]
-        filter_cond_z = (dframe > self.depth_threshold_max) | (dframe < self.depth_threshold_min)
+        # filter z
+        filter_cond_z = (dframe > depth_threshold_max) | (dframe < depth_threshold_min)
+        # ids of the filtered dframe
         dm_frame_filtered_idxs = np.argwhere(~filter_cond_z)
         point_cloud = xyz_numpy(
             dframe, 
@@ -139,8 +80,9 @@ def transform_xyz(self, topx, bottomx, topy, bottomy):
             PARAMS['INTRINSICS_RIGHT_FX'],
             PARAMS['INTRINSICS_RIGHT_FY']
         )
-        return point_cloud    
+        return point_cloud
 
+# Main class implementing the OAKD pipeline
 class DepthTheremin:
     def __init__(
             self, 
@@ -359,46 +301,62 @@ class DepthTheremin:
             q_d = device.getOutputQueue(name=self.depth_stream_name, maxSize=4, blocking=False)
             # current_fps
             self.current_fps = FPS(mean_nb_frames=20)
-            frame_number = 0
             
+            # define inline function to get coordinates in mm and px
+            x_coordinate_mm = lambda x, z: ((x - PARAMS['INTRINSICS_RIGHT_CX'])*z)/PARAMS['INTRINSICS_RIGHT_FX']
+            x_coordinate_px = lambda x: int(x * self.depth_res_w)
+            y_coordinate_px = lambda y: int(y * self.depth_res_h)
+            distance_to_antenna = lambda x, z: np.sqrt((x - self.antenna_x)**2 + (z - self.antenna_z)**2)
+
             if self.depth_roi is not None:
                 # Fixed parameters right hand
-                topx_rh = int(self.depth_roi['right_hand']['topx'] * self.depth_res_w)
-                bottomx_rh = int(self.depth_roi['right_hand']['bottomx'] * self.depth_res_w)
-                topy_rh = int(self.depth_roi['right_hand']['topy'] * self.depth_res_h)
-                bottomy_rh = int(self.depth_roi['right_hand']['bottomy'] * self.depth_res_h)
-                # Distances x,z
-                c1_rh = (((topx_rh - PARAMS['INTRINSICS_RIGHT_CX']) * self.depth_threshold_min)/PARAMS['INTRINSICS_RIGHT_FX'], self.depth_threshold_min)
-                c2_rh = (((bottomx_rh - PARAMS['INTRINSICS_RIGHT_CX']) * self.depth_threshold_min)/PARAMS['INTRINSICS_RIGHT_FX'], self.depth_threshold_min)
-                c3_rh = (((topx_rh - PARAMS['INTRINSICS_RIGHT_CX']) * self.depth_threshold_max)/PARAMS['INTRINSICS_RIGHT_FX'], self.depth_threshold_max)
-                c4_rh = (((bottomx_rh - PARAMS['INTRINSICS_RIGHT_CX']) * self.depth_threshold_max)/PARAMS['INTRINSICS_RIGHT_FX'], self.depth_threshold_max)
-                d1_rh = np.sqrt((c1_rh[0] - self.antenna_x)**2 + (c1_rh[1] - self.antenna_z)**2)
-                d2_rh = np.sqrt((c2_rh[0] - self.antenna_x)**2 + (c2_rh[1] - self.antenna_z)**2)
-                d3_rh = np.sqrt((c3_rh[0] - self.antenna_x)**2 + (c3_rh[1] - self.antenna_z)**2)
-                d4_rh = np.sqrt((c4_rh[0] - self.antenna_x)**2 + (c4_rh[1] - self.antenna_z)**2)
+                #topx_rh = int(self.depth_roi['right_hand']['topx'] * self.depth_res_w)
+                #bottomx_rh = int(self.depth_roi['right_hand']['bottomx'] * self.depth_res_w)
+                #topy_rh = int(self.depth_roi['right_hand']['topy'] * self.depth_res_h)
+                #bottomy_rh = int(self.depth_roi['right_hand']['bottomy'] * self.depth_res_h)
 
-                dmin_rh = min(d1_rh, d2_rh, d3_rh, d4_rh)
-                dmax_rh = max(d1_rh, d2_rh, d3_rh, d4_rh)
+                topx_rh = x_coordinate_px(self.depth_roi['right_hand']['topx'])
+                bottomx_rh = x_coordinate_px(self.depth_roi['right_hand']['bottomx']) 
+                topy_rh = y_coordinate_px(self.depth_roi['right_hand']['topy'])
+                bottomy_rh = y_coordinate_px(self.depth_roi['right_hand']['bottomy'])           
+
+                # Get limits
+                #min_x_min_z = ((topx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_min)/PARAMS['INTRINSICS_RIGHT_FX']
+                #max_x_min_z = ((bottomx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_min)/PARAMS['INTRINSICS_RIGHT_FX']
+                #min_x_max_z = ((topx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_max)/PARAMS['INTRINSICS_RIGHT_FX']
+                #max_x_max_z = ((bottomx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_max)/PARAMS['INTRINSICS_RIGHT_FX']
+
+                min_x_min_z_rh = x_coordinate_mm(topx_rh, self.depth_threshold_min)
+                max_x_min_z_rh = x_coordinate_mm(bottomx_rh, self.depth_threshold_min)
+                min_x_max_z_rh = x_coordinate_mm(topx_rh, self.depth_threshold_max)
+                max_x_max_z_rh = x_coordinate_mm(bottomx_rh, self.depth_threshold_max) 
+                
+                # Fixed parameters left hand
+                #topx_lh = int(self.depth_roi['left_hand']['topx'] * self.depth_res_w)
+                #bottomx_lh = int(self.depth_roi['left_hand']['bottomx'] * self.depth_res_w)
+                #topy_lh = int(self.depth_roi['left_hand']['topy'] * self.depth_res_h)
+                #bottomy_lh = int(self.depth_roi['left_hand']['bottomy'] * self.depth_res_h)
+
+                topx_lh = x_coordinate_px(self.depth_roi['left_hand']['topx'])
+                bottomx_lh = x_coordinate_px(self.depth_roi['left_hand']['bottomx']) 
+                topy_lh = y_coordinate_px(self.depth_roi['left_hand']['topy'])
+                bottomy_lh = y_coordinate_px(self.depth_roi['left_hand']['bottomy'])           
+
+                # Distances to antena (right hand)
+                d_min_x_min_z_rh = distance_to_antenna(min_x_min_z_rh, self.depth_threshold_min)
+                d_max_x_min_z_rh = distance_to_antenna(max_x_min_z_rh, self.depth_threshold_min)
+                d_min_x_max_z_rh = distance_to_antenna(min_x_max_z_rh, self.depth_threshold_max)
+                d_max_x_max_z_rh = distance_to_antenna(max_x_max_z_rh, self.depth_threshold_max)
+
+                dmin_rh = min(d_min_x_min_z_rh, d_max_x_min_z_rh, d_min_x_max_z_rh, d_max_x_max_z_rh)
+                dmax_rh = max(d_min_x_min_z_rh, d_max_x_min_z_rh, d_min_x_max_z_rh, d_max_x_max_z_rh)
                 ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
-                print(f"[{ts}]: Distances: {d1_rh}, {d2_rh}, {d3_rh}, {d4_rh}")
+                print(f"[{ts}]: Distances: {d_min_x_min_z_rh}, {d_max_x_min_z_rh}, {d_min_x_max_z_rh}, {d_max_x_max_z_rh}")
                 print(f"Min: {dmin_rh}")
                 print(f"Max: {dmax_rh}")
 
-                print(c1_rh)
-                print(c2_rh)
-                print(c3_rh)
-                print(c4_rh)
-
-                # Fixed parameters left hand
-                topx_lh = int(self.depth_roi['left_hand']['topx'] * self.depth_res_w)
-                bottomx_lh = int(self.depth_roi['left_hand']['bottomx'] * self.depth_res_w)
-                topy_lh = int(self.depth_roi['left_hand']['topy'] * self.depth_res_h)
-                bottomy_lh = int(self.depth_roi['left_hand']['bottomy'] * self.depth_res_h)
-
                 # Display Loop
                 while True:
-                    # print(device.getChipTemperature().average)
-                    frame_number += 1
                     self.current_fps.update()
                     # Get frame
                     in_depth = q_d.get()
@@ -505,36 +463,37 @@ class SynthMessageProcessor(threading.Thread):
             points = transform_xyz(
                 message['depth'], 
                 message['roi']['topx'], 
+                message['roi']['bottomx'], 
                 message['roi']['topy'], 
-                message['depth_threshold_max'],
-                message['depth_threshold_min']
+                message['roi']['bottomy'], 
+                message['depth_threshold_min'],
+                message['depth_threshold_max']
             )
             if points is not None:
                 # Calculates Centroid (x,y), ignore y
                 # and distance to Antenna center (kind of)
                 points_x = points[0]
                 points_z = points[2]
-                centroid_x = np.mean(points_x)
-                centroid_z = np.mean(points_z)
-                distance = np.sqrt((centroid_x-message['antenna_x'])**2 + (centroid_z-message['antenna_z'])**2)
+                if points_x.size > 0 and points_z.size > 0:
+                    centroid_x = np.mean(points_x)
+                    centroid_z = np.mean(points_z)
+                
+                    distance = np.sqrt((centroid_x-message['antenna_x'])**2 + (centroid_z-message['antenna_z'])**2)
+                    range_ = message['dmax'] - message['dmin']
+                    f0 = np.clip(distance, message['dmin'], message['dmax']) - message['dmin']
+                    f0 = 1 - f0 / range_
                 
                 # only x
-                distance = centroid_x-message['antenna_x']
-
-                print(distance)
-
-
-                #range_ = self.dmax - self.dmin
-                #f0 = np.clip(distance, self.dmin, self.dmax) - self.dmin
-                #f0 = 1 - f0 / range_
-                r1 = message['antenna_x']
-                r2 = 1000
-                range_ = r2 - r1
-                f0 = np.clip(distance, r1, r2) - r1
-                f0 = 1 - f0 / range_
+                # distance = centroid_x-message['antenna_x']
+                # print(distance)
+                # r1 = message['antenna_x']
+                # r2 = 1000
+                # range_ = r2 - r1
+                # f0 = np.clip(distance, r1, r2) - r1
+                # f0 = 1 - f0 / range_
 
 
-                print(f0)
+                    print(f0)
                 #print("----> (x, z) Info:")
                 #print(f"----> Centroid (X, Z): ({centroid_x}, {centroid_z})")
                 #print(f"----> Distance to ({self.antenna_x}, {self.antenna_z}): {distance}")
@@ -545,10 +504,13 @@ class SynthMessageProcessor(threading.Thread):
                 #f0 = np.clip(distance, message['depth_threshold_min'], message['depth_threshold_max']) - message['depth_threshold_min']
                 #f0 = 1 - f0 / rang
                 #print(f0)
-                freq = self.scale.from_0_1_to_f(f0)
-                print(freq)
-                # send to synth
-                # self.synth.set_tone(freq)
+                
+                
+                
+                    freq = self.scale.from_0_1_to_f(f0)
+                    print(freq)
+                    # send to synth
+                    self.synth.set_tone(freq)
 
     # Run thread
     def run(self):
