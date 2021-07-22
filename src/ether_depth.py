@@ -585,7 +585,7 @@ if __name__ == "__main__":
         print(f"[{ts}]: No ROI defined: {filename}")
 
     if the.depth_roi is not None:
-        scale = eqtmp.EqualTempered(octaves=2, start_freq=220, resolution=100)
+        scale = eqtmp.EqualTempered(octaves=3, start_freq=220, resolution=100)
         # Create Synthesizer
         synth = EtherSynth(args.scserver, args.scport)
         # Process Thread
