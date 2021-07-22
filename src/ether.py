@@ -4,9 +4,13 @@
 # Elisa Andrade
 # Jorge Chong
 
-# Currently: we are having problems creating more input/output nodes
-# So for the moment depth is not used but we experimented with it
+# Ether: A Depth based theremin
+# At the moment relies on supercollider for synthesis
+# But future version will have its own internal synth
+# Also could provide controller features through midi/osc
+# in the future
 
+import os
 import cv2
 import depthai as dai
 import numpy as np
@@ -14,494 +18,395 @@ from datetime import datetime
 import mediapipe_utils as mpu
 from pathlib import Path
 from FPS import FPS, now
-import threading
-import queue as Queue
 import equal_tempered as eqtmp
 from pythonosc import udp_client
+import threading
+import queue as Queue
 import argparse
+import pickle
+import config
+import team
 
+PARAMS = config.PARAMS
 
-# Credits:
-# Hand Tracking Model from: geax
-# https://github.com/geaxgx/depthai_hand_tracker
+# xyz coordinates from depth map
+def xyz(frame, idxs, topx, topy, cx, cy, fx, fy):
+    xyz_c = []
+    for v, u in idxs:
+        z = frame[v, u]
+        x = ((u + topx - cx)*z)/fx
+        y = ((v + topy - cy)*z)/fy
+        xyz_c.append([x,y,z])
+    return xyz_c
 
-# Landmarks:
-LM_WRIST = 0
-LM_THUMB_CMC = 1
-LM_THUMB_MCP = 2
-LM_THUMB_IP = 3
-LM_THUMB_TIP = 4
-LM_INDEX_FINGER_MCP = 5
-LM_INDEX_FINGER_PIP = 6
-LM_INDEX_FINGER_DIP = 7
-LM_INDEX_FINGER_TIP = 8
-LM_MIDDLE_FINGER_MCP = 9
-LM_MIDDLE_FINGER_PIP = 10
-LM_MIDDLE_FINGER_DIP = 11
-LM_MIDDLE_FINGER_TIP = 12
-LM_RING_FINGER_MCP = 13
-LM_RING_FINGER_PIP = 14
-LM_RING_FINGER_DIP = 15
-LM_RING_FINGER_TIP = 16
-LM_PINKY_MCP = 17
-LM_PINKY_PIP = 18
-LM_PINKY_DIP = 19
-LM_PINKY_TIP = 20
+# Numpy version
+def xyz_numpy(frame, idxs, topx, topy, cx, cy, fx, fy):
+    u = idxs[:,1]
+    v = idxs[:,0]
+    z = frame[v,u]
+    x = ((u + topx - cx)*z)/fx
+    y = ((v + topy - cy)*z)/fy
+    return x, y, z    
 
-# Parameters
-PARAMS = {
-    'CAPTURE_DEVICE': 0,
-    'KEY_QUIT': 'q',
-    'HUD_COLOR': (153,219,112),
-    'LANDMARKS_COLOR': (0,255,0),
-    'LANDMARKS': [
-                    LM_WRIST, 
-                    LM_THUMB_TIP, 
-                    LM_INDEX_FINGER_TIP, 
-                    LM_MIDDLE_FINGER_TIP,
-                    LM_RING_FINGER_TIP,
-                    LM_PINKY_TIP
-                ],
-    'MEDIAPIPE_HANDS_MODE': False,
-    'MEDIAPIPE_HANDS_MAXHANDS': 2,
-    'MEDIAPIPE_HANDS_DETECTION_CONFIDENCE': 0.5,
-    'MEDIAPIPE_HANDS_TRACKING_CONFIDENCE': 0.5,
-    'PALM_DETECTION_INPUT_LENGTH': 128,
-    'LM_INPUT_LENGTH': 224,
-    'VIDEO_RESOLUTION': dai.ColorCameraProperties.SensorResolution.THE_1080_P,
-    'MONO_LEFT_RESOLUTION': dai.MonoCameraProperties.SensorResolution.THE_800_P,
-    'MONO_RIGHT_RESOLUTION': dai.MonoCameraProperties.SensorResolution.THE_800_P,
-    # 'MONO_LEFT_RESOLUTION': dai.MonoCameraProperties.SensorResolution.THE_400_P,
-    # 'MONO_RIGHT_RESOLUTION': dai.MonoCameraProperties.SensorResolution.THE_400_P,
-    # 'PALM_DETECTION_MODEL_PATH': "models/palm_detection_6_shaves.blob",
-    # 'LM_DETECTION_MODEL_PATH': "models/hand_landmark_6_shaves.blob",
-    'PALM_DETECTION_MODEL_PATH': "models/palm_detection.blob",
-    'LM_DETECTION_MODEL_PATH': "models/hand_landmark.blob",
-    'ROI_DP_LOWER_TH': 100,
-    'ROI_DP_UPPER_TH': 10000,
-    'INITIAL_ROI_TL': dai.Point2f(0.4, 0.4),
-    'INITIAL_ROI_BR': dai.Point2f(0.6, 0.6),
-    'PREVIEW_WIDTH': 576,
-    'PREVIEW_HEIGHT': 324,
-    'SCREEN_MIN_FREQ': 0.5,
-    'SCREEN_MAX_FREQ': 1,
-    'SC_SERVER': '127.0.0.1',
-    'SC_PORT': 57121
-} 
+def get_z(frame, depth_threshold_max, depth_threshold_min):
+    z = None
+    if frame is not None:
+        dframe = frame.copy()
+        filter_cond = (dframe > depth_threshold_max) | (dframe < depth_threshold_min)
+        z = dframe[~filter_cond]
+    return z
 
-# def to_planar(arr: np.ndarray, shape: tuple) -> list:
-def to_planar(arr: np.ndarray, shape: tuple) -> np.ndarray:
-    resized = cv2.resize(arr, shape, interpolation=cv2.INTER_NEAREST)
-    return resized.transpose(2,0,1)
-
-# Hand tracking based theremin (the CV Part)
-class Ether:
-    def __init__(
-        self, 
-        queue,
-        pd_path=PARAMS['PALM_DETECTION_MODEL_PATH'], 
-        pd_score_thresh=0.5, 
-        pd_nms_thresh=0.3,
-        lm_path=PARAMS['LM_DETECTION_MODEL_PATH'],
-        lm_score_threshold=0.5
+def transform_xyz(
+        depth_frame, 
+        topx, 
+        bottomx, 
+        topy, 
+        bottomy, 
+        depth_threshold_min, 
+        depth_threshold_max
     ):
+    point_cloud = None
+    if depth_frame is not None:
+        dframe = depth_frame.copy()
+        # Limit the region
+        dframe = dframe[topy:bottomy+1, topx:bottomx+1]
+        # filter z
+        filter_cond_z = (dframe > depth_threshold_max) | (dframe < depth_threshold_min)
+        # ids of the filtered dframe
+        dm_frame_filtered_idxs = np.argwhere(~filter_cond_z)
+        point_cloud = xyz_numpy(
+            dframe, 
+            dm_frame_filtered_idxs,
+            topx,
+            topy,
+            PARAMS['INTRINSICS_RIGHT_CX'],
+            PARAMS['INTRINSICS_RIGHT_CY'],
+            PARAMS['INTRINSICS_RIGHT_FX'],
+            PARAMS['INTRINSICS_RIGHT_FY']
+        )
+        return point_cloud
+
+# Main class implementing the OAKD pipeline
+class DepthTheremin:
+    def __init__(
+            self, 
+            queue,
+            fps=30,
+            preview_width=640,
+            preview_height=400,
+            antenna_roi=None,
+            depth_stream_name='depth', 
+            depth_threshold_max=700,
+            depth_threshold_min=400,
+            cam_resolution='400'
+        ):
+        # Message processing queue
         self.queue = queue
-        self.pd_path = pd_path
-        self.pd_score_thresh = pd_score_thresh
-        self.pd_nms_thresh = pd_nms_thresh
-        self.lm_path = lm_path
-        self.lm_score_threshold = lm_score_threshold
-            
-        self.show_landmarks = True
-        self.show_handedness = False
-
-        # Create SSD anchors 
-        # https://github.com/google/mediapipe/blob/master/mediapipe/modules/palm_detection/palm_detection_cpu.pbtxt
-        anchor_options = mpu.SSDAnchorOptions(
-            num_layers=4, 
-            min_scale=0.1484375,
-            max_scale=0.75,
-            input_size_height=128,
-            input_size_width=128,
-            anchor_offset_x=0.5,
-            anchor_offset_y=0.5,
-            strides=[8,16,16,16],
-            aspect_ratios=[1.0],
-            reduce_boxes_in_lowest_layer=False,
-            interpolated_scale_aspect_ratio=1.0,
-            fixed_anchor_size=True
-        )
-        self.anchors = mpu.generate_anchors(anchor_options)
-        self.nb_anchors = self.anchors.shape[0]
-        print(f"{self.nb_anchors} anchors have been created")
-        
-        # Rendering flags
-        self.show_pd_box = True
-        self.show_pd_kps = False
-        self.show_rot_rect = False
-        self.show_scores = False
-        self.show_landmarks = True
-        
-        # Preview Sizes
-        self.preview_width = PARAMS['PREVIEW_WIDTH']
-        self.preview_height = PARAMS['PREVIEW_HEIGHT']
-
-        # Palm detector input size
-        self.pd_input_length = PARAMS['PALM_DETECTION_INPUT_LENGTH']
-
-        # Landmark detector input size
-        self.lm_input_length = PARAMS['LM_INPUT_LENGTH']
-
-    # Post process inference from Palm Detector
-    def pd_postprocess(self, inference):
-        scores = np.array(
-            inference.getLayerFp16("classificators"), 
-            dtype=np.float16) # 896
-        bboxes = np.array(
-            inference.getLayerFp16("regressors"), 
-            dtype=np.float16).reshape((self.nb_anchors,18)) # 896x18
-        # Decode bboxes
-        self.regions = mpu.decode_bboxes(
-            self.pd_score_thresh, 
-            scores, 
-            bboxes, 
-            self.anchors)
-        # Non maximum suppression
-        self.regions = mpu.non_max_suppression(self.regions, self.pd_nms_thresh)
-        mpu.detections_to_rect(self.regions)
-        mpu.rect_transformation(self.regions, self.frame_size, self.frame_size)
-
-    # Process Landmarks
-    def lm_postprocess(self, region, inference):
-        region.lm_score = inference.getLayerFp16("Identity_1")[0]    
-        region.handedness = inference.getLayerFp16("Identity_2")[0]
-        lm_raw = np.array(inference.getLayerFp16("Identity_dense/BiasAdd/Add"))
-        # lm_raw = np.array(inference.getLayerFp16("Squeeze"))
-        
-        lm = []
-        for i in range(int(len(lm_raw)/3)):
-            # x,y,z -> x/w,y/h,z/w (here h=w)
-            lm.append(lm_raw[3*i:3*(i+1)]/self.lm_input_length)
-        region.landmarks = lm
-
-    # Transform xy coordinates to normalized xy
-    def lm_transform(self, region):
-        src = np.array([(0, 0), (1, 0), (1, 1)], dtype=np.float32)
-        dst = np.array([ (x, y) for x,y in region.rect_points[1:]], dtype=np.float32) # region.rect_points[0] is left bottom point !
-        mat = cv2.getAffineTransform(src, dst) 
-
-        dst_normal = np.array([ (x/self.frame_size, y/self.frame_size) for x,y in region.rect_points[1:]], dtype=np.float32) # region.rect_points[0] is left bottom point !
-        mat_normal = cv2.getAffineTransform(src, dst_normal)
-
-        lm_xy = np.expand_dims(np.array([(l[0], l[1]) for l in region.landmarks]), axis=0)
-        lm_xy = np.squeeze(cv2.transform(lm_xy, mat)).astype(np.int)
-
-        lm_xy_normal = np.expand_dims(np.array([(l[0], l[1]) for l in region.landmarks]), axis=0)
-        lm_xy_normal = np.squeeze(cv2.transform(lm_xy_normal, mat_normal)).astype(np.float32)
-        
-        region.lm_xy = lm_xy    
-        region.lm_xy_normalized = lm_xy_normal
-        # y rescaled
-        lm_xy_y_rescaled = lm_xy_normal.copy()
-        lm_xy_y_rescaled[:, 1] = (lm_xy_y_rescaled[:, 1] - self.pad_h / self.frame_size) * (self.frame_size/self.preview_height)
-        region.lm_xy_y_rescaled = lm_xy_y_rescaled
-
-    # Render Landmarks
-    def lm_render(self, frame, region):
-        if region.lm_score > self.lm_score_threshold:
-            if self.show_rot_rect:
-                cv2.polylines(frame, [np.array(region.rect_points)], True, (0,255,255), 2, cv2.LINE_AA)
-            
-            if self.show_landmarks:
-                src = np.array([(0, 0), (1, 0), (1, 1)], dtype=np.float32)
-                dst = np.array([ (x, y) for x,y in region.rect_points[1:]], dtype=np.float32) # region.rect_points[0] is left bottom point !
-                # print(region.rect_points[1:])
-                mat = cv2.getAffineTransform(src, dst)
-                lm_xy = np.expand_dims(np.array([(l[0], l[1]) for l in region.landmarks]), axis=0)
-                lm_xy = np.squeeze(cv2.transform(lm_xy, mat)).astype(np.int)
-                list_connections = [[0, 1, 2, 3, 4], 
-                                    [0, 5, 6, 7, 8], 
-                                    [5, 9, 10, 11, 12],
-                                    [9, 13, 14 , 15, 16],
-                                    [13, 17],
-                                    [0, 17, 18, 19, 20]]
-                lines = [np.array([lm_xy[point] for point in line]) for line in list_connections]
-                cv2.polylines(frame, lines, False, (255, 0, 0), 2, cv2.LINE_AA)
-                for x,y in lm_xy:
-                    # print(x,y)
-                    cv2.circle(frame, (x, y), 3, (0,128,255), -1)
-
-    # Transform the normalized x, y and form a message to send
-    # to a queue for further processing (interaction)
-    def xy_message(self, region):
-        handedness = 'R'
-        if region.handedness < 0.5:
-            handedness = 'L'
-        # Renormalize
-        w = self.preview_width
-        h = self.preview_height
-        y_factor = w/h
-        pts = region.lm_xy_normalized.copy()
-        pts[:,1] = pts[:,1]/y_factor
-        # Message
-        message = {
-            'handedness': handedness,
-            'original_xy': region.lm_xy_normalized,
-            'original_xy_y_rescaled': region.lm_xy_y_rescaled,
-            'xy': pts
+        # Camera options = 400, 720, 800 for depth
+        cam_res = {
+            '400': (
+                    dai.MonoCameraProperties.SensorResolution.THE_400_P,
+                    640,
+                    400
+                ),
+            '720': (
+                    dai.MonoCameraProperties.SensorResolution.THE_720_P,
+                    1280,
+                    720
+                ),
+            '800': (
+                    dai.MonoCameraProperties.SensorResolution.THE_800_P,
+                    1280,
+                    800
+                )
         }
-        return message
+        self.depth_mono_resolution_left = cam_res[cam_resolution][0]
+        self.depth_mono_resolution_right = cam_res[cam_resolution][0]
+        self.depth_res_w = cam_res[cam_resolution][1]
+        self.depth_res_h = cam_res[cam_resolution][2]
+        self.depth_fps = fps
+        self.depth_stream_name = depth_stream_name
+        # ROI for depth
+        self.depth_topx = 1
+        self.depth_bottomx = 0
+        self.depth_topy = 1
+        self.depth_bottomy = 0
+        self.depth_roi = None
 
-    # Stop Sending Messages
-    def stop_message(self):
-        message = {
-            'STOP': 1
-        }
-        return message
+        self.depth_frame = None
+        self.show_depth = True
+        self.depth_data = None
 
-    # Draw lines
-    def draw_lines(self, frame, region):
-        pos = region.lm_xy[0, :]
-        w = self.preview_width
-        cv2.line(frame, (pos[0], 0), (pos[0], w), (0,255,0), 1)
-        cv2.line(frame, (0, pos[1]), (w, pos[1]), (0,255,0), 1)
+        # Depth thresholds (experimentally obtained)
+        self.depth_threshold_max = depth_threshold_max
+        self.depth_threshold_min = depth_threshold_min
 
-    # Draw mean line (take the mean of x pos and draw a line)
-    def draw_mean_line_r(self, frame, region):
-        if region.handedness >= 0.5:
-            pos = region.lm_xy[PARAMS['LANDMARKS'], 0]
-            mean_pos_x = int(np.mean(pos))
-            w = self.preview_width
-            cv2.line(frame, (mean_pos_x, 0), (mean_pos_x, w), (0,255,0), 1)
+        # Preview size
+        self.preview_width = preview_width
+        self.preview_height = preview_height
 
-    # Draw min line (take the min of x pos and draw a line)
-    def draw_min_line_r(self, frame, region):
-        # print(region.handedness)
-        if region.handedness >= 0.5:
-            # pos = region.lm_xy[PARAMS['LANDMARKS'], 0]
-            pos = region.lm_xy[:, 0]
-            min_pos_x = int(np.min(pos))
-            w = self.preview_width
-            cv2.line(frame, (min_pos_x, 0), (min_pos_x, w), (0,255,0), 1)
+        # Pipeline
+        self.pipeline = None
 
-    # Pipeline
-    def create_pipeline(self):
-        print("[{}]: Creating Pipeline...".format(
-            datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-            )
+        # Antenna roi
+        self.antenna_x = 0
+        self.antenna_z = 0
+        self.antenna_roi = antenna_roi
+        # Transform x and y to the same cordinates used
+        if self.antenna_roi is not None:
+            x1 = self.antenna_roi['absolute']['bottomx']
+            self.antenna_z = self.antenna_roi['z']
+            self.antenna_x = ((x1 - PARAMS['INTRINSICS_RIGHT_CX'])*self.antenna_z)/PARAMS['INTRINSICS_RIGHT_FX']
+
+    def show_monitor(self, device, frame):
+        pass
+
+
+    # Show display with depth
+    def show_depth_map(
+                    self, 
+                    instr, 
+                    topx1, 
+                    topy1, 
+                    bottomx1, 
+                    bottomy1,
+                    topx2, 
+                    topy2, 
+                    bottomx2, 
+                    bottomy2
+                ):
+        if self.depth_frame is not None:
+            dframe = self.depth_frame.copy()
+            depth_frame_color = cv2.normalize(dframe, None, 255, 0, cv2.NORM_INF, cv2.CV_8UC1)
+            depth_frame_color = cv2.equalizeHist(depth_frame_color)
+            depth_frame_color = cv2.applyColorMap(depth_frame_color, cv2.COLORMAP_OCEAN)
+            
+            # region 1
+            cv2.rectangle(depth_frame_color, (topx1, topy1), (bottomx1, bottomy1), (0,0,255),2)
+            # region 2
+            cv2.rectangle(depth_frame_color, (topx2, topy2), (bottomx2, bottomy2), (0,0,255),2)
+
+            # antenna position
+            if self.antenna_roi is not None:
+                cv2.line(depth_frame_color, 
+                    (self.antenna_roi['absolute']['topx'], 0),
+                    (self.antenna_roi['absolute']['topx'], self.preview_height),
+                    (0,255,0),
+                    2
+                )
+
+            self.current_fps.display(depth_frame_color, orig=(50,20), color=(0,0,255), size=0.6)
+            self.show_instructions(instr, depth_frame_color, orig=(50,40), color=(0,0,255), size=0.6)
+            cv2.imshow(self.depth_stream_name, depth_frame_color)
+
+    # Show display with depth
+    def show_depth_map_segmentation(self, topx, topy, bottomx, bottomy):
+        if self.depth_frame is not None:
+            dframe = self.depth_frame.copy()
+            dframe[dframe > self.depth_threshold_max] = 2**16 - 1
+            dframe[dframe < self.depth_threshold_min] = 2**16 - 1
+            
+            depth_frame_color = cv2.normalize(dframe, None, 255, 0, cv2.NORM_INF, cv2.CV_8UC1)
+            depth_frame_color = cv2.equalizeHist(depth_frame_color)
+            depth_frame_color = cv2.applyColorMap(depth_frame_color, cv2.COLORMAP_OCEAN)    
+
+            # Crop rectangle (right hand)
+            if self.depth_roi is not None:
+                crop_dm = depth_frame_color[topy:bottomy+1, topx:bottomx+1, :].copy()
+                # crop_dm = cv2.resize(crop_dm, (crop_dm.shape[1]*2, crop_dm.shape[0]*2), interpolation=cv2.INTER_AREA)
+                cv2.imshow('thresholded', crop_dm)
+
+    # Set ROI 
+    def set_ROI(self, roi):
+        self.depth_roi = roi
+
+    # Check current pipeline
+    def check_pipeline(self):
+        if self.pipeline is not None:
+            node_map = self.pipeline.getNodeMap()
+            for idx, node in node_map.items():
+                print(f"{idx}: {node.getName()}")
+
+    # Show instructions
+    def show_instructions(self, instr, frame, orig, font=cv2.FONT_HERSHEY_SIMPLEX, size=1, color=(240,180,100), thickness=2):
+        cv2.putText(
+            frame, 
+            f"{instr}", 
+            orig, 
+            font, 
+            size, 
+            color, 
+            thickness
         )
+
+    # Pipeline for depth
+    def create_pipeline_depth(self):
+        ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
+        print(f"[{ts}]: Creating Pipeline for Depth ...")
         # Pipeline
         pipeline = dai.Pipeline()
-        # pipeline.setOpenVINOVersion(version = dai.OpenVINO.Version.VERSION_2021_2)
-        
-        print("[{}]: Setting up Depth...".format(
-            datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-            )
-        )
+        pipeline.setOpenVINOVersion(dai.OpenVINO.Version.VERSION_2021_2)
+        ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
+        print(f"[{ts}]: Setting up Depth...")    
         # Mono Left Camera
         mono_l = pipeline.createMonoCamera()
         # Mono Right Camera
         mono_r = pipeline.createMonoCamera()
         # Mono Camera Settings
-        mono_l.setResolution(PARAMS['MONO_LEFT_RESOLUTION'])
+        mono_l.setResolution(self.depth_mono_resolution_left)
         mono_l.setBoardSocket(dai.CameraBoardSocket.LEFT)
-        mono_r.setResolution(PARAMS['MONO_RIGHT_RESOLUTION'])
+        mono_r.setResolution(self.depth_mono_resolution_right)
         mono_r.setBoardSocket(dai.CameraBoardSocket.RIGHT)
-        #mono_l.setFps(10)
-        #mono_r.setFps(10)
-        # Depth and Depth Calculator
+        # Depth and Output
         stereo = pipeline.createStereoDepth()
-        spatial_calc = pipeline.createSpatialLocationCalculator()
-        # Depth / Calculator / Config / Outputs and Inputs
-        # xout_depth = pipeline.createXLinkOut()
-        xout_spatial_data = pipeline.createXLinkOut()
-        xin_spatial_calc_config = pipeline.createXLinkIn()
+        xout_depth = pipeline.createXLinkOut()
         # Stream Names
-        # xout_depth.setStreamName("depth")
-        xout_spatial_data.setStreamName("spatial")
-        xin_spatial_calc_config.setStreamName("spatial_calc_config")
-        # Stereo Depth parameters
+        xout_depth.setStreamName(self.depth_stream_name)
+        # Stereo Depth parameters 
         output_depth = True
         output_rectified = False
         lr_check = False
         subpixel = False
+        extended = False
         stereo.setOutputDepth(output_depth)
         stereo.setOutputRectified(output_rectified)
-        stereo.setConfidenceThreshold(255)
+        stereo.setConfidenceThreshold(200)
         stereo.setLeftRightCheck(lr_check)
         stereo.setSubpixel(subpixel)
+        stereo.setRectifyEdgeFillColor(0) # Black, to better see the cutout
+
+        # Median Filter
+        median = dai.StereoDepthProperties.MedianFilter.KERNEL_7x7
+
+        # incomptatible options
+        if lr_check or extended or subpixel:
+            median = dai.StereoDepthProperties.MedianFilter.MEDIAN_OFF
+
+        stereo.setMedianFilter(median) 
         # Mono L / R -> Stereo L / R
         mono_l.out.link(stereo.left)
         mono_r.out.link(stereo.right)
-        # Passtrough Stereo -> Stereo Calc -> Output Depth
-        # spatial_calc.passthroughDepth.link(xout_depth.input)
-        # Stereo Depth -> Stereo Calc
-        stereo.depth.link(spatial_calc.inputDepth)
-        # Configure the initial ROI (Body center) for Spatial Calc
-        spatial_calc.setWaitForConfigInput(False)
-        first_config = dai.SpatialLocationCalculatorConfigData()
-        first_config.depthThresholds.lowerThreshold = PARAMS['ROI_DP_LOWER_TH']
-        first_config.depthThresholds.upperThreshold = PARAMS['ROI_DP_UPPER_TH'] 
-        first_config.roi = dai.Rect(PARAMS['INITIAL_ROI_TL'], PARAMS['INITIAL_ROI_BR'])
-        spatial_calc.initialConfig.addROI(first_config)
-        # # Spatial Calc -> Out spatial
-        # spatial_calc.out.link(xout_spatial_data.input)
-        # In spatial_calc_config -> Spatial Calc Config
-        # # xin_spatial_calc_config.out.link(spatial_calc.inputConfig)
-
-        # Color Camera
-        print("[{}]: Color Camera...".format(
-            datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-            )
-        )
-        cam = pipeline.createColorCamera()
-        cam.setPreviewSize(self.preview_width, self.preview_height)
-        cam.setInterleaved(False)
-        cam.setBoardSocket(dai.CameraBoardSocket.RGB)
-        cam_out = pipeline.createXLinkOut()
-        cam_out.setStreamName("cam_out")
-        cam.preview.link(cam_out.input)
-
-        # Palm Detector
-        print("[{}]: Mediapipe Palm Detector NN...".format(
-            datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-            )
-        )
-        pd_nn = pipeline.createNeuralNetwork()
-        pd_nn.setBlobPath(str(Path(self.pd_path).resolve().absolute()))
-        pd_nn.setNumInferenceThreads(2)
-        pd_in = pipeline.createXLinkIn()
-        pd_in.setStreamName("pd_in")
-        pd_in.out.link(pd_nn.input)
-        pd_out = pipeline.createXLinkOut()
-        pd_out.setStreamName("pd_out")
-        pd_nn.out.link(pd_out.input)
-
-        # Hand Landmark Detector
-        print("[{}]: Mediapipe Hand Landmark NN...".format(
-            datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-            )
-        )
-        lm_nn = pipeline.createNeuralNetwork()
-        lm_nn.setBlobPath(str(Path(self.lm_path).resolve().absolute()))
-        lm_nn.setNumInferenceThreads(2)
-        lm_in = pipeline.createXLinkIn()
-        lm_in.setStreamName("lm_in")
-        lm_in.out.link(lm_nn.input)
-        lm_out = pipeline.createXLinkOut()
-        lm_out.setStreamName("lm_out")
-        lm_nn.out.link(lm_out.input)           
+        # Stereo Depth -> Out
+        stereo.depth.link(xout_depth.input)
         
-        print("[{}]: Pipeline Created...".format(
-            datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-            )
-        )        
+        ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S") 
+        print(f"[{ts}]: Pipeline Created...")    
         return pipeline
 
-    def run(self):
-        pipeline = self.create_pipeline()
-        with dai.Device(pipeline) as device:
-            print(device.startPipeline())
+    # Capture Depth using ROI specified
+    def capture_depth(self):
+        self.pipeline = self.create_pipeline_depth()
+        self.check_pipeline()
+        with dai.Device(self.pipeline) as device:
+            ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
+            print(f"[{ts}]: Pipeline Started...")
+
+            # Queue for depth
+            q_d = device.getOutputQueue(name=self.depth_stream_name, maxSize=4, blocking=False)
+            # current_fps
+            self.current_fps = FPS(mean_nb_frames=20)
             
-            # Queues
-            # 1. Out: Video output
-            q_video = device.getOutputQueue(name="cam_out", maxSize=1, blocking=False)
-            # 2. In: Palm Detector Input
-            q_pd_in = device.getInputQueue(name="pd_in")
-            # 3. Out: Palm Detector Output
-            q_pd_out = device.getOutputQueue(name="pd_out", maxSize=4, blocking=False)
-            # 4. Landmarks Out
-            q_lm_out = device.getOutputQueue(name="lm_out", maxSize=4, blocking=False)
-            # 5. Landmarks In
-            q_lm_in = device.getInputQueue(name="lm_in")
-            # 6. Out: Depth
-            #q_d = device.getOutputQueue(name="depth", maxSize=4, blocking=False)
-            # 7. Out: Spatial Avg Estimation (Calculator)
-            #q_spatial = device.getOutputQueue(name="spatial", maxSize=4, blocking=False)
-            # 8. In: Config for Spatial Calculator
-            #q_spatial_config = device.getInputQueue("spatial_calc_config")
+            # define inline function to get coordinates in mm and px
+            x_coordinate_mm = lambda x, z: ((x - PARAMS['INTRINSICS_RIGHT_CX'])*z)/PARAMS['INTRINSICS_RIGHT_FX']
+            x_coordinate_px = lambda x: int(x * self.depth_res_w)
+            y_coordinate_px = lambda y: int(y * self.depth_res_h)
+            distance_to_antenna = lambda x, z: np.sqrt((x - self.antenna_x)**2 + (z - self.antenna_z)**2)
 
-            while True:
-                in_video = q_video.get()
-                video_frame = in_video.getCvFrame()
+            if self.depth_roi is not None:
+                # Fixed parameters right hand
+                #topx_rh = int(self.depth_roi['right_hand']['topx'] * self.depth_res_w)
+                #bottomx_rh = int(self.depth_roi['right_hand']['bottomx'] * self.depth_res_w)
+                #topy_rh = int(self.depth_roi['right_hand']['topy'] * self.depth_res_h)
+                #bottomy_rh = int(self.depth_roi['right_hand']['bottomy'] * self.depth_res_h)
 
-                # Dimensions of the Video Frame
-                h, w = video_frame.shape[:2]
-                self.h = h
-                self.w = w
-                # Padding top and bottom
-                self.frame_size = max(self.h, self.w)
-                self.pad_h = int((self.frame_size - self.h)/2)
-                self.pad_w = int((self.frame_size - self.w)/2)
+                topx_rh = x_coordinate_px(self.depth_roi['right_hand']['topx'])
+                bottomx_rh = x_coordinate_px(self.depth_roi['right_hand']['bottomx']) 
+                topy_rh = y_coordinate_px(self.depth_roi['right_hand']['topy'])
+                bottomy_rh = y_coordinate_px(self.depth_roi['right_hand']['bottomy'])           
 
-                video_frame = cv2.copyMakeBorder(
-                    video_frame, 
-                    self.pad_h, 
-                    self.pad_h, 
-                    self.pad_w, 
-                    self.pad_w, 
-                    cv2.BORDER_CONSTANT
-                )
+                # Get limits
+                #min_x_min_z = ((topx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_min)/PARAMS['INTRINSICS_RIGHT_FX']
+                #max_x_min_z = ((bottomx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_min)/PARAMS['INTRINSICS_RIGHT_FX']
+                #min_x_max_z = ((topx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_max)/PARAMS['INTRINSICS_RIGHT_FX']
+                #max_x_max_z = ((bottomx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_max)/PARAMS['INTRINSICS_RIGHT_FX']
+
+                min_x_min_z_rh = x_coordinate_mm(topx_rh, self.depth_threshold_min)
+                max_x_min_z_rh = x_coordinate_mm(bottomx_rh, self.depth_threshold_min)
+                min_x_max_z_rh = x_coordinate_mm(topx_rh, self.depth_threshold_max)
+                max_x_max_z_rh = x_coordinate_mm(bottomx_rh, self.depth_threshold_max) 
                 
-                frame_nn = dai.ImgFrame()
-                frame_nn.setWidth(self.pd_input_length)
-                frame_nn.setHeight(self.pd_input_length)
-                frame_nn.setData(to_planar(video_frame, (self.pd_input_length, self.pd_input_length)))
-                q_pd_in.send(frame_nn)
+                # Fixed parameters left hand
+                #topx_lh = int(self.depth_roi['left_hand']['topx'] * self.depth_res_w)
+                #bottomx_lh = int(self.depth_roi['left_hand']['bottomx'] * self.depth_res_w)
+                #topy_lh = int(self.depth_roi['left_hand']['topy'] * self.depth_res_h)
+                #bottomy_lh = int(self.depth_roi['left_hand']['bottomy'] * self.depth_res_h)
 
-                annotated_frame = video_frame.copy()
+                topx_lh = x_coordinate_px(self.depth_roi['left_hand']['topx'])
+                bottomx_lh = x_coordinate_px(self.depth_roi['left_hand']['bottomx']) 
+                topy_lh = y_coordinate_px(self.depth_roi['left_hand']['topy'])
+                bottomy_lh = y_coordinate_px(self.depth_roi['left_hand']['bottomy'])           
 
-                # Get palm detection
-                inference = q_pd_out.get()
-                self.pd_postprocess(inference)
+                # Distances to antena (right hand)
+                d_min_x_min_z_rh = distance_to_antenna(min_x_min_z_rh, self.depth_threshold_min)
+                d_max_x_min_z_rh = distance_to_antenna(max_x_min_z_rh, self.depth_threshold_min)
+                d_min_x_max_z_rh = distance_to_antenna(min_x_max_z_rh, self.depth_threshold_max)
+                d_max_x_max_z_rh = distance_to_antenna(max_x_max_z_rh, self.depth_threshold_max)
 
-                # Data for landmarks
-                for region in self.regions:
-                    img_hand = mpu.warp_rect_img(
-                        region.rect_points, 
-                        video_frame, 
-                        self.lm_input_length, 
-                        self.lm_input_length
-                    )
-                    nn_data = dai.NNData()
-                    nn_data.setLayer("input_1", to_planar(img_hand, (self.lm_input_length, self.lm_input_length)))
-                    q_lm_in.send(nn_data)
+                dmin_rh = min(d_min_x_min_z_rh, d_max_x_min_z_rh, d_min_x_max_z_rh, d_max_x_max_z_rh)
+                dmax_rh = max(d_min_x_min_z_rh, d_max_x_min_z_rh, d_min_x_max_z_rh, d_max_x_max_z_rh)
+                ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
+                print(f"[{ts}]: Distances: {d_min_x_min_z_rh}, {d_max_x_min_z_rh}, {d_min_x_max_z_rh}, {d_max_x_max_z_rh}")
+                print(f"Min: {dmin_rh}")
+                print(f"Max: {dmax_rh}")
 
-                # Retrieve Landmarks
-                for region in self.regions:
-                    inference = q_lm_out.get()
-                    self.lm_postprocess(region, inference)
-                    self.lm_render(annotated_frame, region)
+                # Display Loop
+                while True:
+                    self.current_fps.update()
+                    # Get frame
+                    in_depth = q_d.get()
+                    self.depth_frame = in_depth.getFrame()
 
-                    # Print Handedness, and Coordinates
-                    if region.lm_score > self.lm_score_threshold:
-                        # [0,1] normalization of loandmark points
-                        self.lm_transform(region)
-                        # self.draw_mean_line(annotated_frame, region)
-                        self.draw_min_line_r(annotated_frame, region)
-
-                        # Post message
-                        message = self.xy_message(region)
-                        self.queue.put(message)
-                        
-                #annotated_frame = annotated_frame[self.pad_h:self.pad_h+h, self.pad_w:self.pad_w+w]
-                # invert
-                inverted_frame = annotated_frame.copy()
-                inverted_frame = cv2.flip(inverted_frame, 1)
-                # show
-                cv2.imshow("Landmarks", inverted_frame)
-                key = cv2.waitKey(1) 
-                if key == ord('q') or key == 27:
-                    message = self.stop_message()
+                    # Send data to queue (only right hand at the moment)
+                    message = {
+                        'DATA': 1,
+                        'depth': self.depth_frame,
+                        'roi': {
+                            'topx': topx_rh,
+                            'topy': topy_rh,
+                            'bottomx': bottomx_rh,
+                            'bottomy': bottomy_rh
+                        },
+                        'antenna_x': self.antenna_x,
+                        'antenna_z': self.antenna_z,
+                        'depth_threshold_min': self.depth_threshold_min,
+                        'depth_threshold_max': self.depth_threshold_max,
+                        'dmin': dmin_rh,
+                        'dmax': dmax_rh
+                    }
                     self.queue.put(message)
 
-                    break
-                elif key == 32:
-                    # Pause on space bar
-                    cv2.waitKey(0)
-            
-            # message = self.stop_message()
-            # self.queue.put(message)
+                    # Show depth
+                    instr = "q: quit"
+                    self.show_depth_map(
+                                    instr, 
+                                    topx_rh, 
+                                    topy_rh, 
+                                    bottomx_rh, 
+                                    bottomy_rh,
+                                    topx_lh, 
+                                    topy_lh, 
+                                    bottomx_lh, 
+                                    bottomy_lh
+                                )
+
+                    # Show threshold image
+                    self.show_depth_map_segmentation(topx_rh, topy_rh, bottomx_rh, bottomy_rh)
+                    
+                    # Commands
+                    key = cv2.waitKey(1) 
+                    if key == ord('q') or key == 27:
+                        # quit
+                        break
 
 # Create Synth in supercollider 
 class EtherSynth:
@@ -525,7 +430,8 @@ class EtherSynth:
         sc_client = udp_client.SimpleUDPClient(self.sc_server, self.sc_port)
         sc_client.send_message("/main/a", volume)
 
-# Process messages from inference (specific hand landmarks)
+
+# Process messages from inference (depth map)
 # and send proper parameters to synthesizer
 class SynthMessageProcessor(threading.Thread):
     def __init__(
@@ -533,15 +439,16 @@ class SynthMessageProcessor(threading.Thread):
             queue, 
             synth, 
             scale,
-            min_freq=PARAMS['SCREEN_MIN_FREQ'], 
-            max_freq=PARAMS['SCREEN_MAX_FREQ'] 
+            adjust_dmin=20,
+            adjust_dmax=500
         ):
         threading.Thread.__init__(self)
         self.synth = synth
         self.queue = queue
         self.active = True
-        self.screen_min_freq = min_freq
-        self.screen_max_freq = max_freq
+        self.dmin = adjust_dmin
+        self.dmax = adjust_dmax
+
         # Scale
         self.scale = scale
 
@@ -549,48 +456,66 @@ class SynthMessageProcessor(threading.Thread):
         self.volume = 0
 
     # Process a Hand Landmark Message
-    def process(self, message):        
-        landmarks = 1.0 - message['original_xy']
-        # print(landmarks)
-        # pos = landmarks[PARAMS['LANDMARKS'], 0]
-        pos = landmarks[:, 0]
-        # mean_pos_x = np.mean(pos)
-        max_pos_x = np.max(pos)
+    def process(self, message):
+        if 'DATA' in message:
+            self.synth.set_volume(1)
+            # Only z
+            #zs = get_z(message['depth'], message['depth_threshold_max'], message['depth_threshold_min'])
+            #distance = np.mean(zs)
+            #print(f"----> Centroid Z: {centroid_z}")
 
-        # Rigth Hand: Tone Control
-        if message['handedness'] == 'R':
-            if max_pos_x >= self.screen_min_freq:
-                # clip and rescale to [0,1]
-                tmp_x = np.clip(max_pos_x, self.screen_min_freq, self.screen_max_freq)
-                # tmp_x = np.clip(mean_pos_x, self.screen_min_freq, self.screen_max_freq)
-                x = (tmp_x - self.screen_min_freq) / (self.screen_max_freq - self.screen_min_freq)
-                # convert freq
-                freq = self.scale.from_0_1_to_f(x)          
-                # send to synth
-                self.synth.set_tone(freq)
+            points = transform_xyz(
+                message['depth'], 
+                message['roi']['topx'], 
+                message['roi']['bottomx'], 
+                message['roi']['topy'], 
+                message['roi']['bottomy'], 
+                message['depth_threshold_min'],
+                message['depth_threshold_max']
+            )
+            if points is not None:
+                # Calculates Centroid (x,y), ignore y
+                # and distance to Antenna center (kind of)
+                points_x = points[0]
+                points_z = points[2]
+                if points_x.size > 0 and points_z.size > 0:
+                    centroid_x = np.mean(points_x)
+                    centroid_z = np.mean(points_z)
+                
+                    distance = np.sqrt((centroid_x-message['antenna_x'])**2 + (centroid_z-message['antenna_z'])**2)
+                    range_ = message['dmax'] - message['dmin']
+                    f0 = np.clip(distance, message['dmin'], message['dmax']) - message['dmin']
+                    f0 = 1 - f0 / range_
+                
+                # only x
+                # distance = centroid_x-message['antenna_x']
+                # print(distance)
+                # r1 = message['antenna_x']
+                # r2 = 1000
+                # range_ = r2 - r1
+                # f0 = np.clip(distance, r1, r2) - r1
+                # f0 = 1 - f0 / range_
 
-        # Left Hand: Volume Control
-        if message['handedness'] == 'L':
-            lm_l = 1.0 - message['original_xy_y_rescaled']
-            # print(lm_l)
-            pos_y = lm_l[PARAMS['LANDMARKS'], 1]
-            min_pos_y = np.min(pos_y)
-            max_pos_y = np.max(pos_y)
-            if max_pos_y > self.volume:
-                self.volume = max_pos_y
-            else:
-                self.volume = min_pos_y
-            # clip to [0,1]
-            y = np.clip(self.volume, 0, 1)
 
-            if y > 0.8:
-                y = 1
-            if y < 0.2:
-                y = 0
+                    print(f0)
+                #print("----> (x, z) Info:")
+                #print(f"----> Centroid (X, Z): ({centroid_x}, {centroid_z})")
+                #print(f"----> Distance to ({self.antenna_x}, {self.antenna_z}): {distance}")
 
-            # send to synth
-            self.synth.set_volume(y)
-    
+
+                # process the thresholds
+                #rang = message['depth_threshold_max'] - message['depth_threshold_min']
+                #f0 = np.clip(distance, message['depth_threshold_min'], message['depth_threshold_max']) - message['depth_threshold_min']
+                #f0 = 1 - f0 / rang
+                #print(f0)
+                
+                
+                
+                    freq = self.scale.from_0_1_to_f(f0)
+                    print(freq)
+                    # send to synth
+                    self.synth.set_tone(freq)
+
     # Run thread
     def run(self):
         while self.active:
@@ -601,22 +526,78 @@ class SynthMessageProcessor(threading.Thread):
                 # Process
                 self.process(message)
 
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--scserver', default="{}".format(PARAMS['SC_SERVER']), type=str, 
                         help="IP Address of Supercollider Server")
     parser.add_argument("--scport", default=PARAMS['SC_PORT'], type=int,
                         help="Port of Supercollider Server")
+    parser.add_argument('--fps', default=PARAMS['FPS'], type=int, help="Capture FPS")
+    parser.add_argument('--antenna', default=PARAMS['ANTENNA_ROI_FILENAME'], type=str, help="ROI of the Theremin antenna")
+    parser.add_argument('--body', default=PARAMS['BODY_ROI_FILENAME'], type=str, help="ROI of body position")
+    parser.add_argument('--prwidth', default=PARAMS['PREVIEW_WIDTH'], type=int, help="Preview Width")
+    parser.add_argument('--prheight', default=PARAMS['PREVIEW_HEIGHT'], type=int, help="Preview Height")
     args = parser.parse_args()
 
-    scale = eqtmp.EqualTempered(octaves=3, start_freq=440, resolution=1000)
-    # Create Synthesizer
-    synth = EtherSynth(args.scserver, args.scport)
-    # Message Queues
+    print(team.banner)
+
+    # Read positon Rois. If rois missing -> go to configuration
+    ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
+    print(f"[{ts}] Reading ROIs...")
+    filename_1 = f"{PARAMS['DATASET_PATH']}/{args.body}"
+    filename_2 = f"{PARAMS['DATASET_PATH']}/{args.antenna}"
+    rois = None
+    with open(filename_1, "rb") as fl1:
+        with open(filename_2, "rb") as fl2:
+            rois = {}
+            rois['body'] = pickle.load(fl1)
+            rois['antenna'] = pickle.load(fl2)
+            for k, v in rois['body'].items(): print(f"{k}: {v}")
+            for k, v in rois['antenna'].items(): print(f"{k}: {v}")        
+
+    if rois is None:
+        print("ROIs not defined: Please run configuration")
+        exit()
+
+
+    # Message Queue
     messages = Queue.Queue()
-    # Process Thread
-    smp = SynthMessageProcessor(messages, synth, scale)
-    smp.start()
-    # OAKD inference processor
-    there = Ether(messages)
-    there.run() 
+
+    # Depth based Theremin 
+    the = DepthTheremin(
+        queue=messages,
+        fps=args.fps,
+        preview_width=args.prwidth,
+        preview_height=args.prheight,
+        depth_threshold_min=rois['antenna']['z'] + PARAMS['ANTENNA_BUFFER'],
+        depth_threshold_max=rois['body']['z'] - PARAMS['BODY_BUFFER'],
+        antenna_roi=rois['antenna']
+    )
+
+    # Read ROI from file
+    filename = PARAMS['DATASET_PATH'] + "/" + PARAMS['DEPTH_ROI_FILENAME']
+    ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
+    if os.path.isfile(filename):
+        print(f"[{ts}]: Reading ROI from file: {filename}")
+        with open(filename, "rb") as file:
+            roi = pickle.load(file)
+            print(roi)
+            the.set_ROI(roi)
+    else:
+        print(f"[{ts}]: No ROI defined: {filename}")
+
+    if the.depth_roi is not None:
+        scale = eqtmp.EqualTempered(octaves=3, start_freq=220, resolution=100)
+        # Create Synthesizer
+        synth = EtherSynth(args.scserver, args.scport)
+        # Process Thread
+        smp = SynthMessageProcessor(messages, synth, scale)
+        smp.start()
+        # Depth
+        the.capture_depth()
+        # quit
+        message = {'STOP': 1}
+        messages.put(message)
+        cv2.destroyAllWindows()
