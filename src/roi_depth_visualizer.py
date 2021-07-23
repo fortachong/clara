@@ -36,6 +36,7 @@ def xyz(frame, idxs, topx, topy, cx, cy, fx, fy):
         xyz_c.append([x,y,z])
     return xyz_c
 
+
 # Numpy version
 def xyz_numpy(frame, idxs, topx, topy, cx, cy, fx, fy):
     u = idxs[:,1]
@@ -44,6 +45,7 @@ def xyz_numpy(frame, idxs, topx, topy, cx, cy, fx, fy):
     x = ((u + topx - cx)*z)/fx
     y = ((v + topy - cy)*z)/fy
     return x, y, z
+
 
 # Class implementing the OAKD pipeline
 class DepthTheremin:
@@ -140,8 +142,7 @@ class DepthTheremin:
 
     # Show display with depth
     def show_depth_map(
-                    self, 
-                    instr, 
+                    self,
                     topx1, 
                     topy1, 
                     bottomx1, 
@@ -150,47 +151,85 @@ class DepthTheremin:
                     topy2, 
                     bottomx2, 
                     bottomy2
-                ):
+                    ):
         if self.depth_frame is not None:
             dframe = self.depth_frame.copy()
             depth_frame_color = cv2.normalize(dframe, None, 255, 0, cv2.NORM_INF, cv2.CV_8UC1)
             depth_frame_color = cv2.equalizeHist(depth_frame_color)
             depth_frame_color = cv2.applyColorMap(depth_frame_color, cv2.COLORMAP_OCEAN)
-            
             # region 1
-            cv2.rectangle(depth_frame_color, (topx1, topy1), (bottomx1, bottomy1), (0,0,255),2)
-            # region 2
-            cv2.rectangle(depth_frame_color, (topx2, topy2), (bottomx2, bottomy2), (0,0,255),2)
+            if self.depth_roi is not None: 
+                cv2.rectangle(depth_frame_color, (topx1, topy1), (bottomx1, bottomy1), (0,255,0),2)
+                # region 2
+                cv2.rectangle(depth_frame_color, (topx2, topy2), (bottomx2, bottomy2), (0,255,0),2)
 
-            # antenna position
-            if self.antenna_roi is not None:
-                cv2.line(depth_frame_color, 
-                    (self.antenna_roi['absolute']['topx'], 0),
-                    (self.antenna_roi['absolute']['topx'], self.preview_height),
-                    (0,255,0),
-                    2
-                )
+                # antenna position
+                if self.antenna_roi is not None:
+                    cv2.line(depth_frame_color, 
+                        (self.antenna_roi['absolute']['topx'], 0),
+                        (self.antenna_roi['absolute']['topx'], self.preview_height),
+                        (0,255,0),
+                        2
+                    )                     
 
-            self.current_fps.display(depth_frame_color, orig=(50,20), color=(0,0,255), size=0.6)
-            self.show_instructions(instr, depth_frame_color, orig=(50,40), color=(0,0,255), size=0.6)
+            # Flip
+            depth_frame_color = cv2.flip(depth_frame_color, 1)
             cv2.imshow(self.depth_stream_name, depth_frame_color)
 
     # Show only the segmented region
-    def show_depth_map_segmentation(self, topx, topy, bottomx, bottomy):
+    def show_depth_map_segmentation(
+                                self, 
+                                instr, 
+                                topx1, 
+                                topy1, 
+                                bottomx1, 
+                                bottomy1,
+                                topx2, 
+                                topy2, 
+                                bottomx2, 
+                                bottomy2
+                            ):
         if self.depth_frame is not None:
-            dframe = self.depth_frame.copy()
-            dframe[dframe > self.depth_threshold_max] = 2**16 - 1
-            dframe[dframe < self.depth_threshold_min] = 2**16 - 1
+            dm = np.zeros((self.depth_frame.shape[0], self.depth_frame.shape[1], 3), np.uint8)
+            dm[:,:] = (85,83,249)
+            dm_frame = dm.copy()
+            dm_frame[:,:] = (114,100,76)
+            dm[self.depth_frame > self.depth_threshold_max] = (114,100,76)
+            dm[self.depth_frame < self.depth_threshold_min] = (114,100,76)
+            dm_frame[topy1:bottomy1+1, topx1:bottomx1+1] = dm[topy1:bottomy1+1, topx1:bottomx1+1]
+            dm_frame[topy2:bottomy2+1, topx2:bottomx2+1] = dm[topy2:bottomy2+1, topx2:bottomx2+1]
             
-            depth_frame_color = cv2.normalize(dframe, None, 255, 0, cv2.NORM_INF, cv2.CV_8UC1)
-            depth_frame_color = cv2.equalizeHist(depth_frame_color)
-            depth_frame_color = cv2.applyColorMap(depth_frame_color, cv2.COLORMAP_OCEAN)    
+            #dframe[dframe > self.depth_threshold_max] = 2**16 - 1
+            #dframe[dframe < self.depth_threshold_min] = 2**16 - 1          
+            #depth_frame_color = cv2.normalize(dframe, None, 255, 0, cv2.NORM_INF, cv2.CV_8UC1)
+            #depth_frame_color = cv2.equalizeHist(depth_frame_color)
+            #depth_frame_color = cv2.applyColorMap(depth_frame_color, cv2.COLORMAP_OCEAN)    
 
             # Crop rectangle (right hand)
             if self.depth_roi is not None:
-                crop_dm = depth_frame_color[topy:bottomy+1, topx:bottomx+1, :].copy()
-                # crop_dm = cv2.resize(crop_dm, (crop_dm.shape[1]*2, crop_dm.shape[0]*2), interpolation=cv2.INTER_AREA)
-                cv2.imshow('thresholded', crop_dm)
+                #crop_dm = depth_frame_color[topy:bottomy+1, topx:bottomx+1, :].copy()
+                #cv2.imshow('thresholded', crop_dm)
+
+                # region 1
+                cv2.rectangle(dm_frame, (topx1, topy1), (bottomx1, bottomy1), (0,255,0),2)
+                # region 2
+                cv2.rectangle(dm_frame, (topx2, topy2), (bottomx2, bottomy2), (0,255,0),2)
+
+                # antenna position
+                if self.antenna_roi is not None:
+                    cv2.line(dm_frame, 
+                        (self.antenna_roi['absolute']['topx'], 0),
+                        (self.antenna_roi['absolute']['topx'], self.preview_height),
+                        (0,255,0),
+                        2
+                    )                     
+
+                # crop_dm = crop_dm[topy:bottomy+1, topx:bottomx+1, :].copy()
+                dm_frame = cv2.flip(dm_frame, 1)
+                self.current_fps.display(dm_frame, orig=(50,20), color=(0,255,0), size=0.6)
+                self.show_instructions(instr, dm_frame, orig=(50,40), color=(0,255,0), size=0.6) 
+                cv2.imshow('thresholded', dm_frame)
+
 
     # Set ROI (left and right hand)
     def set_ROI(self, roi):
@@ -416,19 +455,28 @@ class DepthTheremin:
                     # Show depth
                     instr = "q: quit"
                     self.show_depth_map(
-                                    instr, 
-                                    topx_rh, 
-                                    topy_rh, 
-                                    bottomx_rh, 
-                                    bottomy_rh,
-                                    topx_lh, 
-                                    topy_lh, 
-                                    bottomx_lh, 
-                                    bottomy_lh
-                                )
+                                        topx_rh, 
+                                        topy_rh, 
+                                        bottomx_rh, 
+                                        bottomy_rh,
+                                        topx_lh, 
+                                        topy_lh, 
+                                        bottomx_lh, 
+                                        bottomy_lh
+                                    )
 
                     # Show threshold image (right)
-                    self.show_depth_map_segmentation(topx_rh, topy_rh, bottomx_rh, bottomy_rh)
+                    self.show_depth_map_segmentation(
+                                                instr, 
+                                                topx_rh, 
+                                                topy_rh, 
+                                                bottomx_rh, 
+                                                bottomy_rh,
+                                                topx_lh, 
+                                                topy_lh, 
+                                                bottomx_lh, 
+                                                bottomy_lh
+                                            )
                     
                     # Commands
                     key = cv2.waitKey(1) 
