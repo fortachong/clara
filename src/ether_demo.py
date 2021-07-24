@@ -39,6 +39,7 @@ def xyz(frame, idxs, topx, topy, cx, cy, fx, fy):
         xyz_c.append([x,y,z])
     return xyz_c
 
+
 # Numpy version
 def xyz_numpy(frame, idxs, topx, topy, cx, cy, fx, fy):
     u = idxs[:,1]
@@ -48,6 +49,7 @@ def xyz_numpy(frame, idxs, topx, topy, cx, cy, fx, fy):
     y = ((v + topy - cy)*z)/fy
     return x, y, z    
 
+
 def get_z(frame, depth_threshold_max, depth_threshold_min):
     z = None
     if frame is not None:
@@ -55,6 +57,7 @@ def get_z(frame, depth_threshold_max, depth_threshold_min):
         filter_cond = (dframe > depth_threshold_max) | (dframe < depth_threshold_min)
         z = dframe[~filter_cond]
     return z
+
 
 def transform_xyz(
         depth_frame, 
@@ -85,6 +88,7 @@ def transform_xyz(
             PARAMS['INTRINSICS_RIGHT_FY']
         )
         return point_cloud
+
 
 # Main class implementing the OAKD pipeline
 class DepthTheremin:
@@ -157,10 +161,6 @@ class DepthTheremin:
             x1 = self.antenna_roi['absolute']['bottomx']
             self.antenna_z = self.antenna_roi['z']
             self.antenna_x = ((x1 - PARAMS['INTRINSICS_RIGHT_CX'])*self.antenna_z)/PARAMS['INTRINSICS_RIGHT_FX']
-
-    def show_monitor(self, device, frame):
-        pass
-
 
     # Show display with depth
     def show_depth_map(

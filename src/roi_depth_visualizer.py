@@ -11,6 +11,8 @@ import cv2
 import depthai as dai
 import numpy as np
 from datetime import datetime
+
+from numpy.core.shape_base import block
 import mediapipe_utils as mpu
 from pathlib import Path
 from FPS import FPS, now
@@ -393,7 +395,7 @@ class DepthTheremin:
                 topx_lh = x_coordinate_px(self.depth_roi['left_hand']['topx'])
                 bottomx_lh = x_coordinate_px(self.depth_roi['left_hand']['bottomx']) 
                 topy_lh = y_coordinate_px(self.depth_roi['left_hand']['topy'])
-                bottomy_lh = y_coordinate_px(self.depth_roi['left_hand']['bottomy'])           
+                bottomy_lh = y_coordinate_px(self.depth_roi['left_hand']['bottomy'])
 
                 # Matplotlib plot
                 init = False
@@ -415,10 +417,10 @@ class DepthTheremin:
                         centroid_x = np.mean(points_x)
                         centroid_z = np.mean(points_z)
                         distance = np.sqrt((centroid_x-self.antenna_x)**2 + (centroid_z-self.antenna_z)**2)
-                        print("----> (x, z) Info:")
-                        print(f"----> Centroid (X, Z): ({centroid_x}, {centroid_z})")
-                        print(f"----> Distance to ({self.antenna_x}, {self.antenna_z}): {distance}")
-                        
+                        #print("----> (x, z) Info:")
+                        #print(f"----> Centroid (X, Z): ({centroid_x}, {centroid_z})")
+                        #print(f"----> Distance to ({self.antenna_x}, {self.antenna_z}): {distance}")
+
                         # Show visualization
                         if self.show_plot:
                             if init:
@@ -483,6 +485,7 @@ class DepthTheremin:
                     if key == ord('q') or key == 27:
                         # quit
                         break
+
                     elif key == 32:
                         # Pause on space bar
                         cv2.waitKey(0)
@@ -520,7 +523,7 @@ if __name__ == "__main__":
 
     # Message Queue
     messages = Queue.Queue()
-
+    
     # Depth Theremin (an attempt)
     the = DepthTheremin(
         queue=messages,

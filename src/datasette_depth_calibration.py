@@ -267,6 +267,7 @@ class DatasetteDepthCapture:
                 bottomy = int(self.depth_roi['left_hand']['bottomy'] * h)
                 cv2.rectangle(depth_frame_color, (topx, topy), (bottomx, bottomy), (0,255,0),2)
 
+            depth_frame_color = cv2.flip(depth_frame_color, 1)
             self.show_instructions(instr, depth_frame_color, orig=(50,40), color=(0,0,255), size=0.6)
             cv2.imshow(self.depth_stream_name, depth_frame_color)
 
