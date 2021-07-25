@@ -540,6 +540,7 @@ class DatasetteDepthCapture:
                 if key == ord('r'):
                     # Start depth data 
                     start_capture = True
+                    frame_number = 0
 
                 if key == ord('d'):
                     # Start depth data 
