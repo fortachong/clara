@@ -55,8 +55,6 @@ class DepthTheremin:
             self, 
             queue,
             fps=30,
-            preview_width=640,
-            preview_height=400,
             antenna_roi=None,
             depth_stream_name='depth', 
             depth_threshold_max=700,
@@ -91,10 +89,6 @@ class DepthTheremin:
         # Depth thresholds (experimentally obtained)
         self.depth_threshold_max = depth_threshold_max
         self.depth_threshold_min = depth_threshold_min
-
-        # Preview size
-        self.preview_width = preview_width
-        self.preview_height = preview_height
 
         # Cloud of coordinates (list of x,y,z coordinates)
         self.point_cloud = None
@@ -169,7 +163,7 @@ class DepthTheremin:
                 if self.antenna_roi is not None:
                     cv2.line(depth_frame_color, 
                         (self.antenna_roi['absolute']['topx'], 0),
-                        (self.antenna_roi['absolute']['topx'], self.preview_height),
+                        (self.antenna_roi['absolute']['topx'], self.depth_res_h),
                         (0,255,0),
                         2
                     )                     
@@ -221,7 +215,7 @@ class DepthTheremin:
                 if self.antenna_roi is not None:
                     cv2.line(dm_frame, 
                         (self.antenna_roi['absolute']['topx'], 0),
-                        (self.antenna_roi['absolute']['topx'], self.preview_height),
+                        (self.antenna_roi['absolute']['topx'], self.depth_res_h),
                         (0,255,0),
                         2
                     )                     
@@ -256,9 +250,11 @@ class DepthTheremin:
             thickness
         )
 
-    # Matplotlib plot Initialization
-    def init_plot(
-            self, x, z,
+    # Matplotlib plot Initialization for Right hand xz plot
+    def init_plot_xz(
+            self, 
+            width, height,
+            x, z,
             centroid_x,
             centroid_z,
             min_z, max_z, 
@@ -266,7 +262,8 @@ class DepthTheremin:
             min_x_min_z, max_x_min_z, 
             min_x_max_z, max_x_max_z
         ):
-        fig, ax = plt.subplots(figsize=(6, 5))
+        px = 1/plt.rcParams['figure.dpi']
+        fig, ax = plt.subplots(figsize=(width*px, height*px))
         # set limits
         ax.set_xlim((antenna_x - 150, max_x_min_z + 150))
         ax.set_ylim((min_z - 100, max_z + 100))
@@ -289,8 +286,8 @@ class DepthTheremin:
         fig.canvas.flush_events()
         return fig, ax, plot, centroid_plot
 
-    # Plot
-    def plot(
+    # Plot xz (Right Hand)
+    def plot_xz(
             self, 
             x,
             z,
@@ -303,6 +300,58 @@ class DepthTheremin:
         ):
         plot.set_offsets(np.stack([x,z], axis=1))
         centroid_plot.set_offsets(np.array([centroid_x,centroid_z]))
+        fig.canvas.draw()
+        fig.canvas.flush_events()
+        return fig, ax, plot, centroid_plot
+
+    # Matplotlib plot Initialization for Left hand yz plot
+    def init_plot_yz(
+            self, 
+            width, height,
+            y, z,
+            centroid_y,
+            centroid_z,
+            min_z, max_z, 
+            min_y_min_z, max_y_min_z, 
+            min_y_max_z, max_y_max_z
+        ):
+        px = 1/plt.rcParams['figure.dpi']
+        fig, ax = plt.subplots(figsize=(width*px, height*px))
+        # set limits
+        ymin = min(min_y_min_z, max_y_min_z, min_y_max_z, max_y_max_z)
+        ymax = max(min_y_min_z, max_y_min_z, min_y_max_z, max_y_max_z)
+        ax.set_ylim((ymin - 150, ymax + 150))
+        ax.set_xlim((min_z - 100, max_z + 100))
+        # draw limiting region
+        y0, y1 = ax.get_ylim()
+        ax.axline((min_z, y0), (min_z, y1), ls='dashed', color='r', linewidth=1.2)
+        ax.axline((max_z, y0), (max_z, y1), ls='dashed', color='r', linewidth=1.2)
+        ax.axline((min_z, min_y_min_z), (max_z, min_y_max_z), ls='dashed', color='r', linewidth=1.2)
+        ax.axline((min_z, max_y_min_z), (max_z, max_y_max_z), ls='dashed', color='r', linewidth=1.2)
+        ax.set_xlabel("Z")
+        ax.set_ylabel("Y")
+        # Random initial plot (will be update every frame)
+        plot = ax.scatter(z, y, marker='+', color='k', s=2.2)
+        centroid_plot = ax.scatter(centroid_z, centroid_y, marker='X', color='r', s=20)
+        # draw the canvas
+        fig.canvas.draw()
+        fig.canvas.flush_events()
+        return fig, ax, plot, centroid_plot
+
+    # Plot yz (Left Hand)
+    def plot_yz(
+            self, 
+            y,
+            z,
+            centroid_y,
+            centroid_z,
+            fig,
+            ax,
+            plot,
+            centroid_plot
+        ):
+        plot.set_offsets(np.stack([z, y], axis=1))
+        centroid_plot.set_offsets(np.array([centroid_z, centroid_y]))
         fig.canvas.draw()
         fig.canvas.flush_events()
         return fig, ax, plot, centroid_plot
@@ -378,6 +427,7 @@ class DepthTheremin:
             # define inline function to get coordinates in mm and px
             x_coordinate_mm = lambda x, z: ((x - PARAMS['INTRINSICS_RIGHT_CX'])*z)/PARAMS['INTRINSICS_RIGHT_FX']
             x_coordinate_px = lambda x: int(x * self.depth_res_w)
+            y_coordinate_mm = lambda y, z: ((y - PARAMS['INTRINSICS_RIGHT_CY'])*z)/PARAMS['INTRINSICS_RIGHT_FY']            
             y_coordinate_px = lambda y: int(y * self.depth_res_h)
 
             if self.depth_roi is not None:
@@ -386,7 +436,7 @@ class DepthTheremin:
                 bottomx_rh = x_coordinate_px(self.depth_roi['right_hand']['bottomx']) 
                 topy_rh = y_coordinate_px(self.depth_roi['right_hand']['topy'])
                 bottomy_rh = y_coordinate_px(self.depth_roi['right_hand']['bottomy'])           
-                # Get limits
+                # Get xz limits (right hand)
                 min_x_min_z_rh = x_coordinate_mm(topx_rh, self.depth_threshold_min)
                 max_x_min_z_rh = x_coordinate_mm(bottomx_rh, self.depth_threshold_min)
                 min_x_max_z_rh = x_coordinate_mm(topx_rh, self.depth_threshold_max)
@@ -396,18 +446,25 @@ class DepthTheremin:
                 bottomx_lh = x_coordinate_px(self.depth_roi['left_hand']['bottomx']) 
                 topy_lh = y_coordinate_px(self.depth_roi['left_hand']['topy'])
                 bottomy_lh = y_coordinate_px(self.depth_roi['left_hand']['bottomy'])
+                # Get yz limits (left hand)
+                min_y_min_z_lh = y_coordinate_mm(topy_lh, self.depth_threshold_min)
+                max_y_min_z_lh = y_coordinate_mm(bottomy_lh, self.depth_threshold_min)
+                min_y_max_z_lh = y_coordinate_mm(topy_lh, self.depth_threshold_max)
+                max_y_max_z_lh = y_coordinate_mm(bottomy_lh, self.depth_threshold_max) 
 
                 # Matplotlib plot
-                init = False
-                fig = ax = plot = centroid_plot = None
+                init_xz = False
+                fig_xz = ax_xz = plot_xz = centroid_plot_xz = None
+                init_yz = False
+                fig_yz = ax_yz = plot_yz = centroid_plot_yz = None
                 # Display Loop
                 while True:
                     self.current_fps.update()
                     # Get frame
                     in_depth = q_d.get()
                     self.depth_frame = in_depth.getFrame()
-                    # Get point cloud
-
+                    
+                    # Right hand Point Cloud
                     pc_rh = self.transform_xyz(topx_rh, bottomx_rh, topy_rh, bottomy_rh)
                     if pc_rh is not None:
                         # Calculates Centroid (x,y), ignore y
@@ -421,22 +478,24 @@ class DepthTheremin:
                         #print(f"----> Centroid (X, Z): ({centroid_x}, {centroid_z})")
                         #print(f"----> Distance to ({self.antenna_x}, {self.antenna_z}): {distance}")
 
-                        # Show visualization
+                        # Show visualization xz
                         if self.show_plot:
-                            if init:
-                                if fig is not None:
-                                    fig, ax, plot, centroid_plot = self.plot(
+                            if init_xz:
+                                if fig_xz is not None:
+                                    fig_xz, ax_xz, plot_xz, centroid_plot_xz = self.plot_xz(
                                         points_x,
                                         points_z,
                                         centroid_x,
                                         centroid_z,
-                                        fig,
-                                        ax,
-                                        plot,
-                                        centroid_plot
+                                        fig_xz,
+                                        ax_xz,
+                                        plot_xz,
+                                        centroid_plot_xz
                                     )
                             else:
-                                fig, ax, plot, centroid_plot = self.init_plot(
+                                fig_xz, ax_xz, plot_xz, centroid_plot_xz = self.init_plot_xz(
+                                        self.depth_res_w,
+                                        self.depth_res_h,
                                         points_x, points_z,
                                         centroid_x,
                                         centroid_z,
@@ -445,15 +504,56 @@ class DepthTheremin:
                                         min_x_min_z_rh, max_x_min_z_rh, 
                                         min_x_max_z_rh, max_x_max_z_rh
                                 )
-                                init = True
+                                init_xz = True
     
-                            if fig is not None:
-                                plot_img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-                                plot_img  = plot_img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-                                plot_img = cv2.cvtColor(plot_img, cv2.COLOR_RGB2BGR)
-                                plot_img = cv2.putText(plot_img, f"Distance = {distance}", (10,40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
-                                cv2.imshow("plot", plot_img)
+                            if fig_xz is not None:
+                                plot_img_xz = np.frombuffer(fig_xz.canvas.tostring_rgb(), dtype=np.uint8)
+                                plot_img_xz  = plot_img_xz.reshape(fig_xz.canvas.get_width_height()[::-1] + (3,))
+                                plot_img_xz = cv2.cvtColor(plot_img_xz, cv2.COLOR_RGB2BGR)
+                                plot_img_xz = cv2.putText(plot_img_xz, f"Distance = {distance}", (10,40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
+                                cv2.imshow("Right Hand xz plot", plot_img_xz)
 
+                    # Left hand Point Cloud
+                    pc_lh = self.transform_xyz(topx_lh, bottomx_lh, topy_lh, bottomy_lh)
+                    if pc_lh is not None:
+                        points_y = pc_lh[1]
+                        points_z = pc_lh[2]
+                        centroid_y = np.mean(points_y)
+                        centroid_z = np.mean(points_z)
+
+                        # Show visualization yz
+                        if self.show_plot:
+                            if init_yz:
+                                if fig_yz is not None:
+                                    fig_yz, ax_yz, plot_yz, centroid_plot_yz = self.plot_yz(
+                                        points_y,
+                                        points_z,
+                                        centroid_y,
+                                        centroid_z,
+                                        fig_yz,
+                                        ax_yz,
+                                        plot_yz,
+                                        centroid_plot_yz
+                                    )
+                            else:
+                                fig_yz, ax_yz, plot_yz, centroid_plot_yz = self.init_plot_yz(
+                                        self.depth_res_w,
+                                        self.depth_res_h,
+                                        points_y, points_z,
+                                        centroid_y,
+                                        centroid_z,
+                                        self.depth_threshold_min, self.depth_threshold_max,
+                                        min_y_min_z_lh, max_y_min_z_lh, 
+                                        min_y_max_z_lh, max_y_max_z_lh
+                                )
+                                init_yz = True
+
+                            if fig_yz is not None:
+                                plot_img_yz = np.frombuffer(fig_yz.canvas.tostring_rgb(), dtype=np.uint8)
+                                plot_img_yz  = plot_img_yz.reshape(fig_yz.canvas.get_width_height()[::-1] + (3,))
+                                plot_img_yz = cv2.cvtColor(plot_img_yz, cv2.COLOR_RGB2BGR)
+                                cv2.imshow("Left Hand yz plot", plot_img_yz)
+                        
                     # Show depth
                     instr = "q: quit"
                     self.show_depth_map(
@@ -493,8 +593,6 @@ class DepthTheremin:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--fps', default=PARAMS['FPS'], type=int, help="Capture FPS")
-    parser.add_argument('--prwidth', default=PARAMS['PREVIEW_WIDTH'], type=int, help="Preview Width")
-    parser.add_argument('--prheight', default=PARAMS['PREVIEW_HEIGHT'], type=int, help="Preview Height")
     parser.add_argument('--res', default=PARAMS['DEPTH_RESOLUTION'], type=int, help="Depth Resolution used")
     parser.add_argument('--antenna', default=PARAMS['ANTENNA_ROI_FILENAME'], type=str, help="ROI of the Theremin antenna")
     parser.add_argument('--body', default=PARAMS['BODY_ROI_FILENAME'], type=str, help="ROI of body position")
@@ -528,8 +626,6 @@ if __name__ == "__main__":
     the = DepthTheremin(
         queue=messages,
         fps=args.fps,
-        preview_width=args.prwidth,
-        preview_height=args.prheight,
         cam_resolution=args.res,
         depth_threshold_min=rois['antenna']['z'] + PARAMS['ANTENNA_BUFFER'],
         depth_threshold_max=rois['body']['z'] - PARAMS['BODY_BUFFER'],
