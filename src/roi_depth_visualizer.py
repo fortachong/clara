@@ -22,6 +22,7 @@ import argparse
 import pickle
 import matplotlib.pyplot as plt
 import matplotlib
+import utils
 import config
 import team
 
@@ -62,7 +63,8 @@ class DepthTheremin:
             cam_resolution='400',
             adjust_dmin=20,
             adjust_dmax=500,
-            show_plot=0
+            show_plot=0,
+            distance=0
         ):
         # Message processing queue (delete)
         self.queue = queue
@@ -112,6 +114,9 @@ class DepthTheremin:
 
         # Show visualization
         self.show_plot = show_plot
+
+        # Distance type
+        self.distance = distance
 
     # Transform a region defined by topx, bottomx, topy, bottomy as a point cloud
     def transform_xyz(self, topx, bottomx, topy, bottomy):
@@ -430,6 +435,14 @@ class DepthTheremin:
             y_coordinate_mm = lambda y, z: ((y - PARAMS['INTRINSICS_RIGHT_CY'])*z)/PARAMS['INTRINSICS_RIGHT_FY']            
             y_coordinate_px = lambda y: int(y * self.depth_res_h)
 
+            # distance function
+            if self.distance == 1:
+                dist_func = lambda px, pz, antx, antz: utils.distance_filter_out_(px, pz, antx, antz)
+            elif self.distance == 2:
+                dist_func = lambda px, pz, antx, antz: utils.distance_filter_fingers_(px, pz, antx, antz)
+            else:
+                dist_func = lambda px, pz, antx, antz: utils.distance_(px, pz, antx, antz)
+
             if self.depth_roi is not None:
                 # Fixed parameters right hand
                 topx_rh = x_coordinate_px(self.depth_roi['right_hand']['topx'])
@@ -471,47 +484,51 @@ class DepthTheremin:
                         # and distance to 0,0 (where ever it is)
                         points_x = pc_rh[0]
                         points_z = pc_rh[2]
-                        centroid_x = np.mean(points_x)
-                        centroid_z = np.mean(points_z)
-                        distance = np.sqrt((centroid_x-self.antenna_x)**2 + (centroid_z-self.antenna_z)**2)
-                        #print("----> (x, z) Info:")
-                        #print(f"----> Centroid (X, Z): ({centroid_x}, {centroid_z})")
-                        #print(f"----> Distance to ({self.antenna_x}, {self.antenna_z}): {distance}")
+                        centroid_x, centroid_z, distance = dist_func(points_x, points_z, self.antenna_x, self.antenna_z)
 
-                        # Show visualization xz
-                        if self.show_plot:
-                            if init_xz:
-                                if fig_xz is not None:
-                                    fig_xz, ax_xz, plot_xz, centroid_plot_xz = self.plot_xz(
-                                        points_x,
-                                        points_z,
-                                        centroid_x,
-                                        centroid_z,
-                                        fig_xz,
-                                        ax_xz,
-                                        plot_xz,
-                                        centroid_plot_xz
+                        if distance is not None:
+
+                            #centroid_x = np.mean(points_x)
+                            #centroid_z = np.mean(points_z)
+                            #distance = np.sqrt((centroid_x-self.antenna_x)**2 + (centroid_z-self.antenna_z)**2)
+                            #print("----> (x, z) Info:")
+                            #print(f"----> Centroid (X, Z): ({centroid_x}, {centroid_z})")
+                            #print(f"----> Distance to ({self.antenna_x}, {self.antenna_z}): {distance}")
+
+                            # Show visualization xz
+                            if self.show_plot:
+                                if init_xz:
+                                    if fig_xz is not None:
+                                        fig_xz, ax_xz, plot_xz, centroid_plot_xz = self.plot_xz(
+                                            points_x,
+                                            points_z,
+                                            centroid_x,
+                                            centroid_z,
+                                            fig_xz,
+                                            ax_xz,
+                                            plot_xz,
+                                            centroid_plot_xz
+                                        )
+                                else:
+                                    fig_xz, ax_xz, plot_xz, centroid_plot_xz = self.init_plot_xz(
+                                            self.depth_res_w,
+                                            self.depth_res_h,
+                                            points_x, points_z,
+                                            centroid_x,
+                                            centroid_z,
+                                            self.depth_threshold_min, self.depth_threshold_max, 
+                                            self.antenna_x, self.antenna_z, 
+                                            min_x_min_z_rh, max_x_min_z_rh, 
+                                            min_x_max_z_rh, max_x_max_z_rh
                                     )
-                            else:
-                                fig_xz, ax_xz, plot_xz, centroid_plot_xz = self.init_plot_xz(
-                                        self.depth_res_w,
-                                        self.depth_res_h,
-                                        points_x, points_z,
-                                        centroid_x,
-                                        centroid_z,
-                                        self.depth_threshold_min, self.depth_threshold_max, 
-                                        self.antenna_x, self.antenna_z, 
-                                        min_x_min_z_rh, max_x_min_z_rh, 
-                                        min_x_max_z_rh, max_x_max_z_rh
-                                )
-                                init_xz = True
-    
-                            if fig_xz is not None:
-                                plot_img_xz = np.frombuffer(fig_xz.canvas.tostring_rgb(), dtype=np.uint8)
-                                plot_img_xz  = plot_img_xz.reshape(fig_xz.canvas.get_width_height()[::-1] + (3,))
-                                plot_img_xz = cv2.cvtColor(plot_img_xz, cv2.COLOR_RGB2BGR)
-                                plot_img_xz = cv2.putText(plot_img_xz, f"Distance = {distance}", (10,40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
-                                cv2.imshow("Right Hand xz plot", plot_img_xz)
+                                    init_xz = True
+        
+                                if fig_xz is not None:
+                                    plot_img_xz = np.frombuffer(fig_xz.canvas.tostring_rgb(), dtype=np.uint8)
+                                    plot_img_xz  = plot_img_xz.reshape(fig_xz.canvas.get_width_height()[::-1] + (3,))
+                                    plot_img_xz = cv2.cvtColor(plot_img_xz, cv2.COLOR_RGB2BGR)
+                                    plot_img_xz = cv2.putText(plot_img_xz, f"Distance = {distance}", (10,40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255), 2)
+                                    cv2.imshow("Right Hand xz plot", plot_img_xz)
 
                     # Left hand Point Cloud
                     pc_lh = self.transform_xyz(topx_lh, bottomx_lh, topy_lh, bottomy_lh)
@@ -597,6 +614,7 @@ if __name__ == "__main__":
     parser.add_argument('--antenna', default=PARAMS['ANTENNA_ROI_FILENAME'], type=str, help="ROI of the Theremin antenna")
     parser.add_argument('--body', default=PARAMS['BODY_ROI_FILENAME'], type=str, help="ROI of body position")
     parser.add_argument('--plot', default=0, type=int, help="Show visualization in real time")
+    parser.add_argument('--distance', default=0, type=int, help="Distance mode: 0 -> normal, 1 -> filter outliers, 2 -> only fingers")
     args = parser.parse_args()
 
     print(team.banner)
@@ -630,7 +648,8 @@ if __name__ == "__main__":
         depth_threshold_min=rois['antenna']['z'] + PARAMS['ANTENNA_BUFFER'],
         depth_threshold_max=rois['body']['z'] - PARAMS['BODY_BUFFER'],
         antenna_roi=rois['antenna'],
-        show_plot=args.plot
+        show_plot=args.plot,
+        distance=args.distance
     )
 
     # Read ROI from file

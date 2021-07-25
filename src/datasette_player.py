@@ -18,6 +18,8 @@ from matplotlib.colors import rgb_to_hsv
 import matplotlib.pyplot as plt
 import matplotlib
 import numpy as np
+import tkinter as tk
+from PIL import Image, ImageTk
 import utils
 import config
 import team
@@ -156,6 +158,12 @@ if __name__ == "__main__":
             max_y_min_z_lh = y_coordinate_mm(bottomy_lh, depth_threshold_min)
             min_y_max_z_lh = y_coordinate_mm(topy_lh, depth_threshold_max)
             max_y_max_z_lh = y_coordinate_mm(bottomy_lh, depth_threshold_max) 
+            # Get diagonal vector and distance (we could try with antenna reference)
+            diag_x = max_x_max_z_rh-min_x_min_z_rh
+            diag_z = depth_threshold_max-depth_threshold_min
+            diag_distance = np.sqrt(diag_x**2 + diag_z**2)
+            diag_x_u = diag_x/diag_distance
+            diag_z_u = diag_z/diag_distance
 
             # Timestamps
             timestamps = []
@@ -176,41 +184,54 @@ if __name__ == "__main__":
                     data['right'] = datapoint['depth_map']
                 frame_data[milis] = data
 
-            # Loop
-            ts_idx = 0
-            previous_lh = None
-            previous_rh = None
-            # Matplotlib plot
-            init_xz = False
-            fig_xz = ax_xz = plot_xz = centroid_plot_xz = None
-            init_yz = False
-            fig_yz = ax_yz = plot_yz = centroid_plot_yz = None
+            # Global variables
+            STATE = 1
+            CURRENT_TS_IDX = 0
+            CONTEXT = {
+                'previous_lh': None,
+                'previous_rh': None,
+                'init_xz': False,
+                'fig_xz': None,
+                'ax_xz': None,
+                'plot_xz': None,
+                'centroid_plot_xz': None,
+                'centroid_plot_xz_f': None,
+                'centroid_plot_xz_fingers': None,
+                'init_yz': False,
+                'fig_yz': None,
+                'ax_yz': None,
+                'plot_yz': None,
+                'centroid_plot_yz': None
+            }
 
-            while True:
+            # Show One Frame
+            def show_frame():
+                global STATE, CURRENT_TS_IDX
                 final_frame = np.zeros((depth_res_h, depth_res_w*3, 3), np.uint8)
-                if ts_idx >= len(timestamps):
-                    ts_idx = 0
-                ts = timestamps[ts_idx]
+                if CURRENT_TS_IDX >= len(timestamps):
+                    CURRENT_TS_IDX = 0
+                ts = timestamps[CURRENT_TS_IDX]
                 lh = None
                 rh = None
                 dm = np.zeros((depth_res_h, depth_res_w), np.uint16)
                 lh = frame_data[ts]['left']
                 if frame_data[ts]['left'] is None:
-                    lh = previous_lh
+                    lh = CONTEXT['previous_lh']
                 else:
-                    previous_lh = lh
+                    CONTEXT['previous_lh'] = lh
                 rh = frame_data[ts]['right']
                 if frame_data[ts]['right'] is None:
-                    rh = previous_rh
+                    rh = CONTEXT['previous_rh']
                 else:
-                    previous_rh = rh
+                    CONTEXT['previous_rh'] = rh
                 
                 if lh is not None:
                     dm[topy_lh:bottomy_lh+1, topx_lh:bottomx_lh+1] = lh
 
                 if rh is not None:
                     dm[topy_rh:bottomy_rh+1, topx_rh:bottomx_rh+1] = rh
-
+                
+                # Center frame
                 frame_ = show_depth_map_segmentation(
                         dm,
                         antenna_x_abs,
@@ -242,44 +263,57 @@ if __name__ == "__main__":
                     # and distance to 0,0 (where ever it is)
                     points_x = pc_rh[0]
                     points_z = pc_rh[2]
-                    centroid_x = np.mean(points_x)
-                    centroid_z = np.mean(points_z)
-                    distance = np.sqrt((centroid_x-antenna_x)**2 + (centroid_z-antenna_z)**2)
-                    
+                    centroid_x, centroid_z, distance = utils.distance_(points_x, points_z, antenna_x, antenna_z)
+                    # filter out outliers
+                    centroid_f_x, centroid_f_z, distance_f = utils.distance_filter_out_(points_x, points_z, antenna_x, antenna_z)
+                    # only fingers
+                    fing_centroid_x, fing_centroid_z, distance_fing = utils.distance_filter_fingers_(points_x, points_z, antenna_x, antenna_z)
+
                     # Show visualization xz
-                    if init_xz:
-                        if fig_xz is not None:
-                            fig_xz, ax_xz, plot_xz, centroid_plot_xz = utils.plot_xz(
+                    if CONTEXT['init_xz']:
+                        if CONTEXT['fig_xz'] is not None:
+                            CONTEXT['fig_xz'], CONTEXT['ax_xz'], CONTEXT['plot_xz'], CONTEXT['centroid_plot_xz'], CONTEXT['centroid_plot_xz_f'], CONTEXT['centroid_plot_xz_fingers'] = utils.plot_xz(
                                 points_x,
                                 points_z,
                                 centroid_x,
                                 centroid_z,
-                                fig_xz,
-                                ax_xz,
-                                plot_xz,
-                                centroid_plot_xz
+                                centroid_f_x,
+                                centroid_f_z,
+                                fing_centroid_x,
+                                fing_centroid_z,
+                                CONTEXT['fig_xz'], 
+                                CONTEXT['ax_xz'], CONTEXT['plot_xz'], 
+                                CONTEXT['centroid_plot_xz'], 
+                                CONTEXT['centroid_plot_xz_f'], 
+                                CONTEXT['centroid_plot_xz_fingers']
                             )
                     else:
-                        fig_xz, ax_xz, plot_xz, centroid_plot_xz = utils.init_plot_xz(
+                        CONTEXT['fig_xz'], CONTEXT['ax_xz'], CONTEXT['plot_xz'], CONTEXT['centroid_plot_xz'], CONTEXT['centroid_plot_xz_f'], CONTEXT['centroid_plot_xz_fingers'] = utils.init_plot_xz(
                                 depth_res_w,
                                 depth_res_h,
                                 points_x, points_z,
                                 centroid_x,
                                 centroid_z,
+                                centroid_f_x,
+                                centroid_f_z,
+                                fing_centroid_x,
+                                fing_centroid_z,
                                 depth_threshold_min,
                                 depth_threshold_max,
                                 antenna_x, antenna_z,
                                 min_x_min_z_rh, max_x_min_z_rh, 
                                 min_x_max_z_rh, max_x_max_z_rh
                         )
-                        init_xz = True
+                        CONTEXT['init_xz'] = True
 
-                    if fig_xz is not None:
-                        img_xz = np.frombuffer(fig_xz.canvas.tostring_rgb(), dtype=np.uint8)
-                        img_xz  = img_xz.reshape(fig_xz.canvas.get_width_height()[::-1] + (3,))
+                    if CONTEXT['fig_xz'] is not None:
+                        img_xz = np.frombuffer(CONTEXT['fig_xz'].canvas.tostring_rgb(), dtype=np.uint8)
+                        img_xz  = img_xz.reshape(CONTEXT['fig_xz'].canvas.get_width_height()[::-1] + (3,))
                         img_xz = cv2.cvtColor(img_xz, cv2.COLOR_RGB2BGR)
-                        img_xz = cv2.putText(img_xz, f"Distance = {distance}", (10,40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
-                        
+                        img_xz = cv2.putText(img_xz, f"Distance 1 = {distance}", (10,20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1)
+                        img_xz = cv2.putText(img_xz, f"Distance 2 = {distance_f}", (10,40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1)
+                        img_xz = cv2.putText(img_xz, f"Distance 3 = {distance_fing}", (320,20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1)
+                
                 # Plot yz
                 pc_lh = utils.transform_xyz(
                     dm, topx_lh, bottomx_lh, topy_lh, bottomy_lh,
@@ -297,20 +331,20 @@ if __name__ == "__main__":
                     centroid_z = np.mean(points_z)
                     
                     # Show visualization xz
-                    if init_yz:
-                        if fig_yz is not None:
-                            fig_yz, ax_yz, plot_yz, centroid_plot_yz = utils.plot_yz(
+                    if CONTEXT['init_yz']:
+                        if CONTEXT['fig_yz'] is not None:
+                            CONTEXT['fig_yz'], CONTEXT['ax_yz'], CONTEXT['plot_yz'], CONTEXT['centroid_plot_yz'] = utils.plot_yz(
                                 points_y,
                                 points_z,
                                 centroid_y,
                                 centroid_z,
-                                fig_yz,
-                                ax_yz,
-                                plot_yz,
-                                centroid_plot_yz
+                                CONTEXT['fig_yz'], 
+                                CONTEXT['ax_yz'], 
+                                CONTEXT['plot_yz'], 
+                                CONTEXT['centroid_plot_yz']
                             )
                     else:
-                        fig_yz, ax_yz, plot_yz, centroid_plot_yz = utils.init_plot_yz(
+                        CONTEXT['fig_yz'], CONTEXT['ax_yz'], CONTEXT['plot_yz'], CONTEXT['centroid_plot_yz'] = utils.init_plot_yz(
                                 depth_res_w,
                                 depth_res_h,
                                 points_y, points_z,
@@ -321,29 +355,254 @@ if __name__ == "__main__":
                                 min_y_min_z_lh, max_y_min_z_lh, 
                                 min_y_max_z_lh, max_y_max_z_lh
                         )
-                        init_yz = True
+                        CONTEXT['init_yz'] = True
 
-                    if fig_yz is not None:
-                        img_yz = np.frombuffer(fig_yz.canvas.tostring_rgb(), dtype=np.uint8)
-                        img_yz  = img_yz.reshape(fig_yz.canvas.get_width_height()[::-1] + (3,))
+                    if CONTEXT['fig_yz'] is not None:
+                        img_yz = np.frombuffer(CONTEXT['fig_yz'].canvas.tostring_rgb(), dtype=np.uint8)
+                        img_yz  = img_yz.reshape(CONTEXT['fig_yz'].canvas.get_width_height()[::-1] + (3,))
                         img_yz = cv2.cvtColor(img_yz, cv2.COLOR_RGB2BGR)
 
                 final_frame[:,depth_res_w:depth_res_w*2] = frame_
                 if img_xz is not None:
                     final_frame[:,depth_res_w*2:] = img_xz
                 if img_yz is not None:
-                    final_frame[:,0:depth_res_w] = img_yz
+                    final_frame[:,0:depth_res_w] = img_yz   
+
+                # Pillow expect BGR
+                final_frame = cv2.cvtColor(final_frame, cv2.COLOR_BGR2RGB)
+                # Next Frame
+                CURRENT_TS_IDX += 1
+
+                # Show Control
+                img = Image.fromarray(final_frame)
+                imgtk = ImageTk.PhotoImage(image=img)
+                lmain.imgtk = imgtk
+                lmain.configure(image=imgtk)
+                lmain.after(10, show_frame) 
+
+                        
+
+            # Window
+            window = tk.Tk()  #Makes main window
+            window.wm_title("Player")
+            window.config(background="#FFFFFF")
+            # Graphics window
+            img_frame = tk.Frame(window, width=depth_res_w*3+20, height=depth_res_h+10)
+            img_frame.grid(row=0, column=0, padx=10, pady=2)
+            lmain = tk.Label(img_frame)
+            lmain.grid(row=0, column=0)
+
+            # First
+            show_frame()
+            # Tk main loop 
+            window.mainloop()
+
+
+            # Loop
+            #ts_idx = 0
+            #previous_lh = None
+            #previous_rh = None
+            # Matplotlib plot
+            #init_xz = False
+            #fig_xz = ax_xz = plot_xz = centroid_plot_xz = centroid_plot_xz_f = centroid_plot_xz_fingers = None
+            #init_yz = False
+            #fig_yz = ax_yz = plot_yz = centroid_plot_yz = None
+
+            # while True:
+            #     final_frame = np.zeros((depth_res_h, depth_res_w*3, 3), np.uint8)
+            #     if ts_idx >= len(timestamps):
+            #         ts_idx = 0
+            #     ts = timestamps[ts_idx]
+            #     lh = None
+            #     rh = None
+            #     dm = np.zeros((depth_res_h, depth_res_w), np.uint16)
+            #     lh = frame_data[ts]['left']
+            #     if frame_data[ts]['left'] is None:
+            #         lh = previous_lh
+            #     else:
+            #         previous_lh = lh
+            #     rh = frame_data[ts]['right']
+            #     if frame_data[ts]['right'] is None:
+            #         rh = previous_rh
+            #     else:
+            #         previous_rh = rh
                 
-                cv2.imshow("Data Capture Player", final_frame)
-                time.sleep(0.001)
+            #     if lh is not None:
+            #         dm[topy_lh:bottomy_lh+1, topx_lh:bottomx_lh+1] = lh
 
-                key = cv2.waitKey(1) 
-                if key == ord('q') or key == 27:
-                    # quit
-                    break
-                ts_idx += 1
+            #     if rh is not None:
+            #         dm[topy_rh:bottomy_rh+1, topx_rh:bottomx_rh+1] = rh
 
-            cv2.destroyAllWindows()
+            #     frame_ = show_depth_map_segmentation(
+            #             dm,
+            #             antenna_x_abs,
+            #             depth_res_h,
+            #             topx_rh, 
+            #             topy_rh,
+            #             bottomx_rh, 
+            #             bottomy_rh,
+            #             topx_lh, 
+            #             topy_lh, 
+            #             bottomx_lh, 
+            #             bottomy_lh
+            #         )
+
+            #     img_xz = None
+            #     img_yz = None
+
+            #     # Plot xz
+            #     pc_rh = utils.transform_xyz(
+            #         dm, topx_rh, bottomx_rh, topy_rh, bottomy_rh,
+            #         depth_threshold_min, depth_threshold_max,
+            #         PARAMS['INTRINSICS_RIGHT_CX'],
+            #         PARAMS['INTRINSICS_RIGHT_CY'],
+            #         PARAMS['INTRINSICS_RIGHT_FX'],
+            #         PARAMS['INTRINSICS_RIGHT_FY']                  
+            #     )
+            #     if pc_rh is not None:
+            #         # Calculates Centroid (x,y), ignore y
+            #         # and distance to 0,0 (where ever it is)
+            #         points_x = pc_rh[0]
+            #         points_z = pc_rh[2]
+            #         centroid_x, centroid_z, distance = utils.distance_(points_x, points_z, antenna_x, antenna_z)
+            #         # filter out outliers
+            #         centroid_f_x, centroid_f_z, distance_f = utils.distance_filter_out_(points_x, points_z, antenna_x, antenna_z)
+            #         # only fingers
+            #         fing_centroid_x, fing_centroid_z, distance_fing = utils.distance_filter_fingers_(points_x, points_z, antenna_x, antenna_z)
+
+            #         #q1x, q3x = np.quantile(points_x, [0.25, 0.75])
+            #         #q1z, q3z = np.quantile(points_z, [0.25, 0.75])
+            #         #iqrx = q3x - q1x
+            #         #iqrz = q3z - q1z
+            #         # limits to determine outliers
+            #         #liminfx = q1x - 1.5*iqrx
+            #         #limsupx = q3x + 1.5*iqrx
+            #         #liminfz = q1z - 1.5*iqrz
+            #         #limsupz = q3z + 1.5*iqrz
+            #         # filter outliers (only include points between liminf and limsup)
+            #         #points_xz = np.vstack([points_x, points_z])
+            #         #cond_x = (points_xz[0,:] >= liminfx) & (points_xz[0,:] <= limsupx)
+            #         #cond_z = (points_xz[1,:] >= liminfz) & (points_xz[1,:] <= limsupz)
+            #         #filterd_xz = points_xz[:,cond_x | cond_z]
+            #         # further filter the 
+            #         #cond_z_fingers = (filterd_xz[1,:] <= centroid_z)
+            #         #fingers_xz = filterd_xz[:,cond_z_fingers]
+            #         #fing_centroid_x = np.mean(fingers_xz[0,:])
+            #         #fing_centroid_z = np.mean(fingers_xz[1,:])
+            #         #distance_fing = np.sqrt((fing_centroid_x-antenna_x)**2 + (fing_centroid_z-antenna_z)**2)
+            #         # projection (todo)
+
+
+            #         # Show visualization xz
+            #         if init_xz:
+            #             if fig_xz is not None:
+            #                 fig_xz, ax_xz, plot_xz, centroid_plot_xz, centroid_plot_xz_f, centroid_plot_xz_fingers = utils.plot_xz(
+            #                     points_x,
+            #                     points_z,
+            #                     centroid_x,
+            #                     centroid_z,
+            #                     centroid_f_x,
+            #                     centroid_f_z,
+            #                     fing_centroid_x,
+            #                     fing_centroid_z,
+            #                     fig_xz,
+            #                     ax_xz,
+            #                     plot_xz,
+            #                     centroid_plot_xz,
+            #                     centroid_plot_xz_f,
+            #                     centroid_plot_xz_fingers
+            #                 )
+            #         else:
+            #             fig_xz, ax_xz, plot_xz, centroid_plot_xz, centroid_plot_xz_f, centroid_plot_xz_fingers = utils.init_plot_xz(
+            #                     depth_res_w,
+            #                     depth_res_h,
+            #                     points_x, points_z,
+            #                     centroid_x,
+            #                     centroid_z,
+            #                     centroid_f_x,
+            #                     centroid_f_z,
+            #                     fing_centroid_x,
+            #                     fing_centroid_z,
+            #                     depth_threshold_min,
+            #                     depth_threshold_max,
+            #                     antenna_x, antenna_z,
+            #                     min_x_min_z_rh, max_x_min_z_rh, 
+            #                     min_x_max_z_rh, max_x_max_z_rh
+            #             )
+            #             init_xz = True
+
+            #         if fig_xz is not None:
+            #             img_xz = np.frombuffer(fig_xz.canvas.tostring_rgb(), dtype=np.uint8)
+            #             img_xz  = img_xz.reshape(fig_xz.canvas.get_width_height()[::-1] + (3,))
+            #             img_xz = cv2.cvtColor(img_xz, cv2.COLOR_RGB2BGR)
+            #             img_xz = cv2.putText(img_xz, f"Distance 1 = {distance}", (10,20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1)
+            #             img_xz = cv2.putText(img_xz, f"Distance 2 = {distance_f}", (10,40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1)
+            #             img_xz = cv2.putText(img_xz, f"Distance 3 = {distance_fing}", (320,20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1)
+                        
+            #     # Plot yz
+            #     pc_lh = utils.transform_xyz(
+            #         dm, topx_lh, bottomx_lh, topy_lh, bottomy_lh,
+            #         depth_threshold_min, depth_threshold_max,
+            #         PARAMS['INTRINSICS_RIGHT_CX'],
+            #         PARAMS['INTRINSICS_RIGHT_CY'],
+            #         PARAMS['INTRINSICS_RIGHT_FX'],
+            #         PARAMS['INTRINSICS_RIGHT_FY']                  
+            #     )
+            #     if pc_lh is not None:
+            #         # Calculates Centroid (x,y), ignore y
+            #         points_y = pc_rh[1]
+            #         points_z = pc_rh[2]
+            #         centroid_y = np.mean(points_y)
+            #         centroid_z = np.mean(points_z)
+                    
+            #         # Show visualization xz
+            #         if init_yz:
+            #             if fig_yz is not None:
+            #                 fig_yz, ax_yz, plot_yz, centroid_plot_yz = utils.plot_yz(
+            #                     points_y,
+            #                     points_z,
+            #                     centroid_y,
+            #                     centroid_z,
+            #                     fig_yz,
+            #                     ax_yz,
+            #                     plot_yz,
+            #                     centroid_plot_yz
+            #                 )
+            #         else:
+            #             fig_yz, ax_yz, plot_yz, centroid_plot_yz = utils.init_plot_yz(
+            #                     depth_res_w,
+            #                     depth_res_h,
+            #                     points_y, points_z,
+            #                     centroid_y,
+            #                     centroid_z,
+            #                     depth_threshold_min,
+            #                     depth_threshold_max,
+            #                     min_y_min_z_lh, max_y_min_z_lh, 
+            #                     min_y_max_z_lh, max_y_max_z_lh
+            #             )
+            #             init_yz = True
+
+            #         if fig_yz is not None:
+            #             img_yz = np.frombuffer(fig_yz.canvas.tostring_rgb(), dtype=np.uint8)
+            #             img_yz  = img_yz.reshape(fig_yz.canvas.get_width_height()[::-1] + (3,))
+            #             img_yz = cv2.cvtColor(img_yz, cv2.COLOR_RGB2BGR)
+
+            #     final_frame[:,depth_res_w:depth_res_w*2] = frame_
+            #     if img_xz is not None:
+            #         final_frame[:,depth_res_w*2:] = img_xz
+            #     if img_yz is not None:
+            #         final_frame[:,0:depth_res_w] = img_yz
+                
+            #     cv2.imshow("Data Capture Player", final_frame)
+            #     time.sleep(0.001)
+
+            #     key = cv2.waitKey(1) 
+            #     if key == ord('q') or key == 27:
+            #         # quit
+            #         break
+            #     ts_idx += 1
+
+            # cv2.destroyAllWindows()
 
 
 
