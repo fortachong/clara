@@ -141,8 +141,11 @@ def init_plot_xz(
     if centroid_fing_z is None:
         c_fing_z = centroid_z        
 
+    # plt.rcParams['figure.facecolor'] = '#646970'
     px = 1/plt.rcParams['figure.dpi']
     fig, ax = plt.subplots(figsize=(width*px, height*px))
+    # ax.set(facecolor = "#646970")
+    # ax.axis('off')
     # set limits
     ax.set_xlim((antenna_x - 150, max_x_min_z + 150))
     ax.set_ylim((min_z - 100, max_z + 100))

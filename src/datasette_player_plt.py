@@ -26,48 +26,99 @@ import team
 
 PARAMS = config.PARAMS
 
+# Matplotlib plot Initialization for Right hand xz plot
+def init_plot_xz(
+        width, height,
+        x, z,
+        centroid_x,
+        centroid_z,
+        centroid_f_x,
+        centroid_f_z,
+        centroid_fing_x,
+        centroid_fing_z,
+        min_z, max_z, 
+        antenna_x, antenna_z, 
+        min_x_min_z, max_x_min_z, 
+        min_x_max_z, max_x_max_z
+    ):
+    c_f_x = centroid_f_x
+    if centroid_f_x is None:
+        c_f_x = centroid_x
+    c_f_z = centroid_f_z
+    if centroid_f_z is None:
+        c_f_z = centroid_z
 
-# Show only the segmented region
-def show_depth_map_segmentation(
-                            depth_frame,
-                            antenna_x_abs,
-                            height,
-                            topx1, 
-                            topy1, 
-                            bottomx1, 
-                            bottomy1,
-                            topx2, 
-                            topy2, 
-                            bottomx2, 
-                            bottomy2
-                        ):
-    dm = np.zeros((depth_frame.shape[0], depth_frame.shape[1], 3), np.uint8)
-    dm[:,:] = (85,83,249)
-    dm_frame = dm.copy()
-    dm_frame[:,:] = (114,100,76)
-    dm[depth_frame > depth_threshold_max] = (114,100,76)
-    dm[depth_frame < depth_threshold_min] = (114,100,76)
-    dm_frame[topy1:bottomy1+1, topx1:bottomx1+1] = dm[topy1:bottomy1+1, topx1:bottomx1+1]
-    dm_frame[topy2:bottomy2+1, topx2:bottomx2+1] = dm[topy2:bottomy2+1, topx2:bottomx2+1]
-    # region 1
-    cv2.rectangle(dm_frame, (topx1, topy1), (bottomx1, bottomy1), (0,255,0),2)
-    # region 2
-    cv2.rectangle(dm_frame, (topx2, topy2), (bottomx2, bottomy2), (0,255,0),2)
+    c_fing_x = centroid_fing_x
+    if centroid_fing_x is None:
+        c_f_x = centroid_x
+    c_fing_z = centroid_fing_z
+    if centroid_fing_z is None:
+        c_fing_z = centroid_z        
 
-    # antenna position
-    cv2.line(dm_frame, 
-        (antenna_x_abs, 0),
-        (antenna_x_abs, height),
-        (0,255,0),
-        2
-    )
+    color_bg = '#2C2E43'
+    color_region = '#595260'
+    color_diag = '#FFD523'
+    color_points = '#B2B1B9'
+    color_antenna = '#FFD523'
+    plt.rcParams['figure.facecolor'] = color_bg
+    px = 1/plt.rcParams['figure.dpi']
+    fig, ax = plt.subplots(figsize=(width*px, height*px))
+    ax.set(facecolor=color_bg)
+    ax.axis('off')
+    # set limits
+    ax.set_xlim((antenna_x - 120, max_x_min_z + 120))
+    ax.set_ylim((min_z - 50, max_z + 50))
+    # antenna location
+    ax.plot(antenna_x, antenna_z, marker='X', color=color_antenna, ms=8)
+    ax.text(antenna_x + 5, antenna_z - 8, 'ANTENNA', color=color_antenna, fontsize='large')
+    # draw limiting region
+    x0, x1 = ax.get_xlim()
+    ax.axline((x0, min_z), (x1, min_z), ls='dashed', color=color_region, linewidth=1.2)
+    ax.axline((x0, max_z), (x1, max_z), ls='dashed', color=color_region, linewidth=1.2)
+    ax.axline((antenna_x, min_z), (min_x_max_z, max_z), ls='dashed', color=color_region, linewidth=1.2)
+    ax.axline((antenna_x, antenna_z), (max_x_max_z, max_z), ls='dashed', color=color_diag, linewidth=0.5)
+    ax.axline((max_x_min_z, min_z), (max_x_max_z, max_z), ls='dashed', color=color_region, linewidth=1.2)
+    ax.set_xlabel("X")
+    ax.set_ylabel("Z")
+    # Random initial plot (will be update every frame)
+    plot = ax.scatter(x, z, marker='.', color=color_points, s=2.2)
+    centroid_plot = ax.scatter(centroid_x, centroid_z, marker='X', color='r', s=20)
+    centroid_f_plot = ax.scatter(c_f_x, c_f_z, marker='X', color='g', s=20)
+    centroid_fing_plot = ax.scatter(c_fing_x, c_fing_z, marker='X', color='b', s=20)
+    # axis
+    ax.invert_xaxis()
+    ax.invert_yaxis()
+    plt.subplots_adjust(left=0.01, right=0.99, top=0.99, bottom=0.01)
+    # draw the canvas
+    fig.canvas.draw()
+    fig.canvas.flush_events()
+    return fig, ax, plot, centroid_plot, centroid_f_plot, centroid_fing_plot
 
-    # crop_dm = crop_dm[topy:bottomy+1, topx:bottomx+1, :].copy()
-    dm_frame = cv2.flip(dm_frame, 1)
-    # self.current_fps.display(dm_frame, orig=(50,20), color=(0,255,0), size=0.6)
-    # cv2.imshow(frame_name, dm_frame)
-    return dm_frame
 
+# Plot xz (Right Hand)
+def plot_xz(
+        x,
+        z,
+        centroid_x,
+        centroid_z,
+        centroid_f_x,
+        centroid_f_z,
+        centroid_fing_x,
+        centroid_fing_z,
+        fig,
+        ax,
+        plot,
+        centroid_plot,
+        centroid_f_plot,
+        centroid_fing_plot
+    ):
+    plot.set_offsets(np.stack([x,z], axis=1))
+    centroid_plot.set_offsets(np.array([centroid_x,centroid_z]))
+    centroid_f_plot.set_offsets(np.array([centroid_f_x,centroid_f_z]))
+    centroid_fing_plot.set_offsets(np.array([centroid_fing_x,centroid_fing_z]))
+    fig.canvas.draw()
+    fig.canvas.flush_events()
+    return fig, ax, plot, centroid_plot, centroid_f_plot, centroid_fing_plot
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -217,7 +268,7 @@ if __name__ == "__main__":
             # Show One Frame
             def show_frame():
                 global STATE, CURRENT_TS_IDX
-                final_frame = np.zeros((depth_res_h, depth_res_w*3, 3), np.uint8)
+                final_frame = np.zeros((depth_res_h*2, depth_res_w*2, 3), np.uint8)
                 if CURRENT_TS_IDX >= len(timestamps):
                     CURRENT_TS_IDX = 0
                 ts = timestamps[CURRENT_TS_IDX]
@@ -241,24 +292,8 @@ if __name__ == "__main__":
                 if rh is not None:
                     dm[topy_rh:bottomy_rh+1, topx_rh:bottomx_rh+1] = rh
                 
-                # Center frame
-                frame_ = show_depth_map_segmentation(
-                        dm,
-                        antenna_x_abs,
-                        depth_res_h,
-                        topx_rh, 
-                        topy_rh,
-                        bottomx_rh, 
-                        bottomy_rh,
-                        topx_lh, 
-                        topy_lh, 
-                        bottomx_lh, 
-                        bottomy_lh
-                    )
-
                 img_xz = None
-                img_yz = None
-
+                
                 # Plot xz
                 pc_rh = utils.transform_xyz(
                     dm, topx_rh, bottomx_rh, topy_rh, bottomy_rh,
@@ -286,7 +321,7 @@ if __name__ == "__main__":
                     # Show visualization xz
                     if CONTEXT['init_xz']:
                         if CONTEXT['fig_xz'] is not None:
-                            CONTEXT['fig_xz'], CONTEXT['ax_xz'], CONTEXT['plot_xz'], CONTEXT['centroid_plot_xz'], CONTEXT['centroid_plot_xz_f'], CONTEXT['centroid_plot_xz_fingers'] = utils.plot_xz(
+                            CONTEXT['fig_xz'], CONTEXT['ax_xz'], CONTEXT['plot_xz'], CONTEXT['centroid_plot_xz'], CONTEXT['centroid_plot_xz_f'], CONTEXT['centroid_plot_xz_fingers'] = plot_xz(
                                 points_x,
                                 points_z,
                                 centroid_x,
@@ -302,9 +337,9 @@ if __name__ == "__main__":
                                 CONTEXT['centroid_plot_xz_fingers']
                             )
                     else:
-                        CONTEXT['fig_xz'], CONTEXT['ax_xz'], CONTEXT['plot_xz'], CONTEXT['centroid_plot_xz'], CONTEXT['centroid_plot_xz_f'], CONTEXT['centroid_plot_xz_fingers'] = utils.init_plot_xz(
-                                depth_res_w,
-                                depth_res_h,
+                        CONTEXT['fig_xz'], CONTEXT['ax_xz'], CONTEXT['plot_xz'], CONTEXT['centroid_plot_xz'], CONTEXT['centroid_plot_xz_f'], CONTEXT['centroid_plot_xz_fingers'] = init_plot_xz(
+                                depth_res_w*2,
+                                depth_res_h*2,
                                 points_x, points_z,
                                 centroid_x,
                                 centroid_z,
@@ -328,60 +363,9 @@ if __name__ == "__main__":
                         img_xz = cv2.putText(img_xz, f"Distance 2 = {distance_f}", (10,40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1)
                         img_xz = cv2.putText(img_xz, f"Distance 3 = {distance_fing}", (320,20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1)
                 
-                # Plot yz
-                pc_lh = utils.transform_xyz(
-                    dm, topx_lh, bottomx_lh, topy_lh, bottomy_lh,
-                    depth_threshold_min, depth_threshold_max,
-                    PARAMS['INTRINSICS_RIGHT_CX'],
-                    PARAMS['INTRINSICS_RIGHT_CY'],
-                    PARAMS['INTRINSICS_RIGHT_FX'],
-                    PARAMS['INTRINSICS_RIGHT_FY']                  
-                )
-                if pc_lh is not None:
-                    # Calculates Centroid (x,y), ignore y
-                    points_y = pc_rh[1]
-                    points_z = pc_rh[2]
-                    centroid_y = np.mean(points_y)
-                    centroid_z = np.mean(points_z)
-                    
-                    # Show visualization xz
-                    if CONTEXT['init_yz']:
-                        if CONTEXT['fig_yz'] is not None:
-                            CONTEXT['fig_yz'], CONTEXT['ax_yz'], CONTEXT['plot_yz'], CONTEXT['centroid_plot_yz'] = utils.plot_yz(
-                                points_y,
-                                points_z,
-                                centroid_y,
-                                centroid_z,
-                                CONTEXT['fig_yz'], 
-                                CONTEXT['ax_yz'], 
-                                CONTEXT['plot_yz'], 
-                                CONTEXT['centroid_plot_yz']
-                            )
-                    else:
-                        CONTEXT['fig_yz'], CONTEXT['ax_yz'], CONTEXT['plot_yz'], CONTEXT['centroid_plot_yz'] = utils.init_plot_yz(
-                                depth_res_w,
-                                depth_res_h,
-                                points_y, points_z,
-                                centroid_y,
-                                centroid_z,
-                                depth_threshold_min,
-                                depth_threshold_max,
-                                min_y_min_z_lh, max_y_min_z_lh, 
-                                min_y_max_z_lh, max_y_max_z_lh
-                        )
-                        CONTEXT['init_yz'] = True
-
-                    if CONTEXT['fig_yz'] is not None:
-                        img_yz = np.frombuffer(CONTEXT['fig_yz'].canvas.tostring_rgb(), dtype=np.uint8)
-                        img_yz  = img_yz.reshape(CONTEXT['fig_yz'].canvas.get_width_height()[::-1] + (3,))
-                        img_yz = cv2.cvtColor(img_yz, cv2.COLOR_RGB2BGR)
-
-                final_frame[:,depth_res_w:depth_res_w*2] = frame_
                 if img_xz is not None:
-                    final_frame[:,depth_res_w*2:] = img_xz
-                if img_yz is not None:
-                    final_frame[:,0:depth_res_w] = img_yz   
-
+                    final_frame = img_xz.copy()
+                
                 # Pillow expect BGR
                 final_frame = cv2.cvtColor(final_frame, cv2.COLOR_BGR2RGB)
                 # Next Frame
@@ -392,14 +376,14 @@ if __name__ == "__main__":
                 imgtk = ImageTk.PhotoImage(image=img)
                 lmain.imgtk = imgtk
                 lmain.configure(image=imgtk)
-                lmain.after(10, show_frame) 
+                lmain.after(2, show_frame) 
 
             # Window
             window = tk.Tk()  #Makes main window
             window.wm_title("Player")
             window.config(background="#FFFFFF")
             # Graphics window
-            img_frame = tk.Frame(window, width=depth_res_w*3+20, height=depth_res_h+10)
+            img_frame = tk.Frame(window, width=depth_res_w*2+10, height=depth_res_h*2+10)
             img_frame.grid(row=0, column=0, padx=10, pady=2)
             lmain = tk.Label(img_frame)
             lmain.grid(row=0, column=0)
