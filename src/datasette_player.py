@@ -75,6 +75,7 @@ if __name__ == "__main__":
     parser.add_argument('--res', default=PARAMS['DEPTH_RESOLUTION'], type=int, help="Depth Resolution used")
     parser.add_argument('--antenna', default=PARAMS['ANTENNA_ROI_FILENAME'], type=str, help="ROI of the Theremin antenna")
     parser.add_argument('--body', default=PARAMS['BODY_ROI_FILENAME'], type=str, help="ROI of body position")
+    parser.add_argument('--proj', default=0, type=int, help='Use projections')
     parser.add_argument('--file', type=str, help="Capture File", required=True)
     args = parser.parse_args()
 
@@ -159,12 +160,21 @@ if __name__ == "__main__":
             min_y_max_z_lh = y_coordinate_mm(topy_lh, depth_threshold_max)
             max_y_max_z_lh = y_coordinate_mm(bottomy_lh, depth_threshold_max) 
             # Get diagonal vector and distance (we could try with antenna reference)
-            diag_x = max_x_max_z_rh-min_x_min_z_rh
-            diag_z = depth_threshold_max-depth_threshold_min
+            diag_x = max_x_max_z_rh-antenna_x
+            diag_z = depth_threshold_max-antenna_z
             diag_distance = np.sqrt(diag_x**2 + diag_z**2)
             diag_x_u = diag_x/diag_distance
             diag_z_u = diag_z/diag_distance
-
+            vector_u = np.array([diag_x_u, diag_z_u])
+            # function to calculate the vector projection
+            def vector_projection(x, z):
+                vector_p = np.array([x-antenna_x, z-antenna_z])
+                p_proj_u = vector_u*(np.dot(vector_u, vector_p))
+                proj_distance = np.linalg.norm(p_proj_u)
+                p_proj_u_x = p_proj_u[0] + antenna_x
+                p_proj_u_z = p_proj_u[1] + antenna_z
+                return p_proj_u_x, p_proj_u_z, proj_distance
+                        
             # Timestamps
             timestamps = []
             frame_data = {}
@@ -269,6 +279,10 @@ if __name__ == "__main__":
                     # only fingers
                     fing_centroid_x, fing_centroid_z, distance_fing = utils.distance_filter_fingers_(points_x, points_z, antenna_x, antenna_z)
 
+                    if args.proj:
+                        if distance_fing is not None:
+                            fing_centroid_x, fing_centroid_z, distance_fing = vector_projection(fing_centroid_x, fing_centroid_z)
+                            
                     # Show visualization xz
                     if CONTEXT['init_xz']:
                         if CONTEXT['fig_xz'] is not None:

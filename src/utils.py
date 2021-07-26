@@ -154,6 +154,7 @@ def init_plot_xz(
     ax.axline((x0, min_z), (x1, min_z), ls='dashed', color='r', linewidth=1.2)
     ax.axline((x0, max_z), (x1, max_z), ls='dashed', color='r', linewidth=1.2)
     ax.axline((antenna_x, min_z), (min_x_max_z, max_z), ls='dashed', color='r', linewidth=1.2)
+    ax.axline((antenna_x, antenna_z), (max_x_max_z, max_z), ls='dashed', color='k', linewidth=0.5)
     ax.axline((max_x_min_z, min_z), (max_x_max_z, max_z), ls='dashed', color='r', linewidth=1.2)
     ax.set_xlabel("X")
     ax.set_ylabel("Z")
