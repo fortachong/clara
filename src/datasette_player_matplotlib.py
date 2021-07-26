@@ -81,7 +81,7 @@ def init_plot_xz(
     ax.set_xlabel("X")
     ax.set_ylabel("Z")
     # Random initial plot (will be update every frame)
-    plot = ax.scatter(x, z, marker='.', color=color_points, s=2.2)
+    plot = ax.scatter(x, z, marker='.', color=color_points, s=60, alpha=0.15)
     centroid_plot = ax.scatter(centroid_x, centroid_z, marker='X', color='r', s=20)
     centroid_f_plot = ax.scatter(c_f_x, c_f_z, marker='X', color='g', s=20)
     centroid_fing_plot = ax.scatter(c_fing_x, c_fing_z, marker='X', color='b', s=20)
