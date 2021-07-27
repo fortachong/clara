@@ -81,7 +81,7 @@ def init_plot_xz(
     ax.set_xlabel("X")
     ax.set_ylabel("Z")
     # Random initial plot (will be update every frame)
-    plot = ax.scatter(x, z, marker='.', color=color_points, s=60, alpha=0.15)
+    plot = ax.scatter(x, z, marker='.', color=color_points, s=90, alpha=0.10)
     centroid_plot = ax.scatter(centroid_x, centroid_z, marker='X', color='r', s=20)
     centroid_f_plot = ax.scatter(c_f_x, c_f_z, marker='X', color='g', s=20)
     centroid_fing_plot = ax.scatter(c_fing_x, c_fing_z, marker='X', color='b', s=20)
@@ -376,7 +376,7 @@ if __name__ == "__main__":
                 imgtk = ImageTk.PhotoImage(image=img)
                 lmain.imgtk = imgtk
                 lmain.configure(image=imgtk)
-                lmain.after(2, show_frame) 
+                lmain.after(5, show_frame) 
 
             # Window
             window = tk.Tk()  #Makes main window
@@ -384,7 +384,7 @@ if __name__ == "__main__":
             window.config(background="#FFFFFF")
             # Graphics window
             img_frame = tk.Frame(window, width=depth_res_w*2+10, height=depth_res_h*2+10)
-            img_frame.grid(row=0, column=0, padx=10, pady=2)
+            img_frame.grid(row=0, column=0, padx=0, pady=0)
             lmain = tk.Label(img_frame)
             lmain.grid(row=0, column=0)
 

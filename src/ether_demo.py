@@ -431,7 +431,8 @@ class SynthMessageProcessor(threading.Thread):
             synth, 
             scale,
             adjust_dmin=20,
-            adjust_dmax=500
+            adjust_dmax=500,
+            dist_function=None
         ):
         threading.Thread.__init__(self)
         self.synth = synth
@@ -439,6 +440,7 @@ class SynthMessageProcessor(threading.Thread):
         self.active = True
         self.dmin = adjust_dmin
         self.dmax = adjust_dmax
+        self.dist_function = dist_function
 
         # Scale
         self.scale = scale
@@ -477,12 +479,12 @@ class SynthMessageProcessor(threading.Thread):
                 
                     # distance = np.sqrt((centroid_x-message['antenna_x'])**2 + (centroid_z-message['antenna_z'])**2)
                     
-                    distance = dist_func(points_x, points_z, message['antenna_x'], message['antenna_z'])
+                    centroid_x, centroid_z, distance = self.dist_function(points_x, points_z, message['antenna_x'], message['antenna_z'])
+                    if distance is not None:
+                        range_ = message['dmax'] - message['dmin']
+                        f0 = np.clip(distance, message['dmin'], message['dmax']) - message['dmin']
+                        f0 = 1 - f0 / range_
                     
-                    range_ = message['dmax'] - message['dmin']
-                    f0 = np.clip(distance, message['dmin'], message['dmax']) - message['dmin']
-                    f0 = 1 - f0 / range_
-                
                 # only x
                 # distance = centroid_x-message['antenna_x']
                 # print(distance)
@@ -493,7 +495,7 @@ class SynthMessageProcessor(threading.Thread):
                 # f0 = 1 - f0 / range_
 
 
-                    print(f0)
+                        print(f0)
                 #print("----> (x, z) Info:")
                 #print(f"----> Centroid (X, Z): ({centroid_x}, {centroid_z})")
                 #print(f"----> Distance to ({self.antenna_x}, {self.antenna_z}): {distance}")
@@ -507,10 +509,10 @@ class SynthMessageProcessor(threading.Thread):
                 
                 
                 
-                    freq = self.scale.from_0_1_to_f(f0)
-                    print(freq)
-                    # send to synth
-                    self.synth.set_tone(freq)
+                        freq = self.scale.from_0_1_to_f(f0)
+                        print(freq)
+                        # send to synth
+                        self.synth.set_tone(freq)
 
     # Run thread
     def run(self):
@@ -597,7 +599,7 @@ if __name__ == "__main__":
         # Create Synthesizer
         synth = EtherSynth(args.scserver, args.scport)
         # Process Thread
-        smp = SynthMessageProcessor(messages, synth, scale)
+        smp = SynthMessageProcessor(messages, synth, scale, dist_function=dist_func)
         smp.start()
         # Depth
         the.capture_depth()
