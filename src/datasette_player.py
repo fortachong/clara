@@ -137,13 +137,11 @@ if __name__ == "__main__":
             x_coordinate_px = lambda x: int(x * depth_res_w)
             y_coordinate_mm = lambda y, z: ((y - PARAMS['INTRINSICS_RIGHT_CY'])*z)/PARAMS['INTRINSICS_RIGHT_FY']            
             y_coordinate_px = lambda y: int(y * depth_res_h)
-
             # Fixed parameters right hand
             topx_rh = x_coordinate_px(rois['right_hand']['topx'])
             bottomx_rh = x_coordinate_px(rois['right_hand']['bottomx']) 
             topy_rh = y_coordinate_px(rois['right_hand']['topy'])
             bottomy_rh = y_coordinate_px(rois['right_hand']['bottomy'])           
-
             # Get xz limits (right hand)
             min_x_min_z_rh = x_coordinate_mm(topx_rh, depth_threshold_min)
             max_x_min_z_rh = x_coordinate_mm(bottomx_rh, depth_threshold_min)
@@ -155,10 +153,14 @@ if __name__ == "__main__":
             topy_lh = y_coordinate_px(rois['left_hand']['topy'])
             bottomy_lh = y_coordinate_px(rois['left_hand']['bottomy'])
             # Get yz limits (left hand)
-            min_y_min_z_lh = y_coordinate_mm(topy_lh, depth_threshold_min)
-            max_y_min_z_lh = y_coordinate_mm(bottomy_lh, depth_threshold_min)
-            min_y_max_z_lh = y_coordinate_mm(topy_lh, depth_threshold_max)
-            max_y_max_z_lh = y_coordinate_mm(bottomy_lh, depth_threshold_max) 
+            min_y_min_z_lh = y_coordinate_mm(bottomy_lh, depth_threshold_min)
+            max_y_min_z_lh = y_coordinate_mm(topy_lh, depth_threshold_min)
+            min_y_max_z_lh = y_coordinate_mm(bottomy_lh, depth_threshold_max)
+            max_y_max_z_lh = y_coordinate_mm(topy_lh, depth_threshold_max) 
+            
+            # Get min and max y coordinate
+            y_min = min(min_y_min_z_lh, max_y_min_z_lh, min_y_max_z_lh, max_y_max_z_lh)
+            y_max = max(min_y_min_z_lh, max_y_min_z_lh, min_y_max_z_lh, max_y_max_z_lh)
             # Get diagonal vector and distance (we could try with antenna reference)
             diag_x = max_x_max_z_rh-antenna_x
             diag_z = depth_threshold_max-antenna_z
@@ -337,44 +339,45 @@ if __name__ == "__main__":
                     PARAMS['INTRINSICS_RIGHT_FX'],
                     PARAMS['INTRINSICS_RIGHT_FY']                  
                 )
+                
                 if pc_lh is not None:
                     # Calculates Centroid (x,y), ignore y
-                    points_y = pc_rh[1]
-                    points_z = pc_rh[2]
-                    centroid_y = np.mean(points_y)
-                    centroid_z = np.mean(points_z)
-                    
-                    # Show visualization xz
-                    if CONTEXT['init_yz']:
-                        if CONTEXT['fig_yz'] is not None:
-                            CONTEXT['fig_yz'], CONTEXT['ax_yz'], CONTEXT['plot_yz'], CONTEXT['centroid_plot_yz'] = utils.plot_yz(
-                                points_y,
-                                points_z,
-                                centroid_y,
-                                centroid_z,
-                                CONTEXT['fig_yz'], 
-                                CONTEXT['ax_yz'], 
-                                CONTEXT['plot_yz'], 
-                                CONTEXT['centroid_plot_yz']
-                            )
-                    else:
-                        CONTEXT['fig_yz'], CONTEXT['ax_yz'], CONTEXT['plot_yz'], CONTEXT['centroid_plot_yz'] = utils.init_plot_yz(
-                                depth_res_w,
-                                depth_res_h,
-                                points_y, points_z,
-                                centroid_y,
-                                centroid_z,
-                                depth_threshold_min,
-                                depth_threshold_max,
-                                min_y_min_z_lh, max_y_min_z_lh, 
-                                min_y_max_z_lh, max_y_max_z_lh
-                        )
-                        CONTEXT['init_yz'] = True
+                    points_y = pc_lh[1]
+                    points_z = pc_lh[2]
+                    if points_y.size:
+                        centroid_y, centroid_z = utils.y_filter_out_(points_y, points_z)
+                        if centroid_y is not None:
+                            # Show visualization xz
+                            if CONTEXT['init_yz']:
+                                if CONTEXT['fig_yz'] is not None:
+                                    CONTEXT['fig_yz'], CONTEXT['ax_yz'], CONTEXT['plot_yz'], CONTEXT['centroid_plot_yz'] = utils.plot_yz(
+                                        points_y,
+                                        points_z,
+                                        centroid_y,
+                                        centroid_z,
+                                        CONTEXT['fig_yz'], 
+                                        CONTEXT['ax_yz'], 
+                                        CONTEXT['plot_yz'], 
+                                        CONTEXT['centroid_plot_yz']
+                                    )
+                            else:
+                                CONTEXT['fig_yz'], CONTEXT['ax_yz'], CONTEXT['plot_yz'], CONTEXT['centroid_plot_yz'] = utils.init_plot_yz(
+                                        depth_res_w,
+                                        depth_res_h,
+                                        points_y, points_z,
+                                        centroid_y,
+                                        centroid_z,
+                                        depth_threshold_min,
+                                        depth_threshold_max,
+                                        min_y_min_z_lh, max_y_min_z_lh, 
+                                        min_y_max_z_lh, max_y_max_z_lh
+                                )
+                                CONTEXT['init_yz'] = True
 
-                    if CONTEXT['fig_yz'] is not None:
-                        img_yz = np.frombuffer(CONTEXT['fig_yz'].canvas.tostring_rgb(), dtype=np.uint8)
-                        img_yz  = img_yz.reshape(CONTEXT['fig_yz'].canvas.get_width_height()[::-1] + (3,))
-                        img_yz = cv2.cvtColor(img_yz, cv2.COLOR_RGB2BGR)
+                            if CONTEXT['fig_yz'] is not None:
+                                img_yz = np.frombuffer(CONTEXT['fig_yz'].canvas.tostring_rgb(), dtype=np.uint8)
+                                img_yz  = img_yz.reshape(CONTEXT['fig_yz'].canvas.get_width_height()[::-1] + (3,))
+                                img_yz = cv2.cvtColor(img_yz, cv2.COLOR_RGB2BGR)
 
                 final_frame[:,depth_res_w:depth_res_w*2] = frame_
                 if img_xz is not None:

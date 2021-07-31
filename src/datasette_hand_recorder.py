@@ -23,6 +23,8 @@ from FPS import FPS, now
 import threading
 import queue as Queue
 import argparse
+import pickle
+import os
 
 
 # Credits:
@@ -86,8 +88,7 @@ PARAMS = {
     'PREVIEW_HEIGHT': 400,
     'HAND_BUFFER_PIXELS': 20, # buffer pixels for capturing the right hand
     'HAND_SIZE': 400, # Max size of the hand image
-    'DATASET_PATH': 'data/positions/',
-    'DEPTH_REGION_FILENAME': 'dr.pickle'
+    'DATASET_PATH': 'data/positions/hands/training'
 } 
 
 # def to_planar(arr: np.ndarray, shape: tuple) -> list:
@@ -100,19 +101,18 @@ def to_planar(arr: np.ndarray, shape: tuple) -> np.ndarray:
 class DatasetteHandCapture:
     def __init__(
         self,
-        queue,
         pd_path='',
         pd_score_thresh=0.5,
         pd_nms_thresh=0.3,
         lm_path='',
         lm_score_threshold=0.5,
-        fps=2,
+        fps=20,
         preview_width=640,
         preview_height=400,
         hand_buffer_pixels=20,
-        hand_size=400
+        hand_size=400,
+        label=''
     ):
-        self.queue = queue
         self.pd_path = pd_path
         self.pd_score_thresh = pd_score_thresh
         self.pd_nms_thresh = pd_nms_thresh
@@ -157,24 +157,15 @@ class DatasetteHandCapture:
         # Landmark detetector input size
         self.lm_input_length = PARAMS['LM_INPUT_LENGTH']
         
-        # Scale used (positions)
-        self.scale_positions = [
-            'B4',
-            'C5',
-            'D5',
-            'E5',
-            'F5',
-            'G5',
-            'A5',
-            'B5',
-            'C6'
-        ]
-
         # Region for depth
         self.depth_topx = 1
         self.depth_bottomx = 0
         self.depth_topy = 1
         self.depth_bottomy = 0
+
+        # Data captured:
+        self.capture = []
+        self.label = label
 
     # Post process inference from Palm Detector
     def pd_postprocess(self, inference):
@@ -272,24 +263,18 @@ class DatasetteHandCapture:
                     # print(x,y)
                     cv2.circle(frame, (x, y), 3, (0,128,255), -1)
 
-    # Show Screen with position and note
-    def show_label(self):
-        pass
+    # Show instructions
+    def show_instructions(self, instr, frame, orig, font=cv2.FONT_HERSHEY_SIMPLEX, size=1, color=(240,180,100), thickness=2):
+        cv2.putText(
+            frame, 
+            f"{instr}", 
+            orig, 
+            font, 
+            size, 
+            color, 
+            thickness
+        )
 
-    # Stop Sending Messages
-    def stop_message(self):
-        message = {
-            'STOP': 1
-        }
-        return message
-
-    # Save Message
-    def save_message(self):
-        message = {
-            'SAVE': 1
-        }
-        return message        
-    
     # Save Depth Region Message
     def save_depth_message(self):
         message = {
@@ -325,6 +310,7 @@ class DatasetteHandCapture:
         cam.setPreviewSize(self.preview_width, self.preview_height)
         cam.setInterleaved(False)
         cam.setBoardSocket(dai.CameraBoardSocket.RGB)
+        cam.setFps(self.fps)
         cam_out = pipeline.createXLinkOut()
         cam_out.setStreamName("cam_out")
         cam.preview.link(cam_out.input)
@@ -385,7 +371,7 @@ class DatasetteHandCapture:
             # current_fps
             self.current_fps = FPS(mean_nb_frames=20)
             frame_number = 0
-            label = 0
+            
             while True:
                 frame_number += 1
                 self.current_fps.update()
@@ -422,6 +408,9 @@ class DatasetteHandCapture:
                 datasette_frame = video_frame.copy()
                 datasette_hand = np.zeros((self.hand_size,self.hand_size,3), np.uint8)
 
+                # flag
+                capture_flag = False
+                temp_capture = []
                 # Palm inference
                 inference = q_pd_out.get()
                 self.pd_postprocess(inference)
@@ -445,7 +434,7 @@ class DatasetteHandCapture:
                         self.lm_postprocess(region, inference)
                         self.lm_render(datasette_frame, region)
                         # Get rigth hand square enclosure
-                        if region.handedness >= 0.5:
+                        if region.handedness >= 0.85:
                             self.lm_transform(region)
                             # Save min and max regions
                             dtx_candidate = np.min(region.lm_xy_y_rescaled[:, 0])
@@ -506,90 +495,44 @@ class DatasetteHandCapture:
                             
                             #datasette_hand = cv2.resize(chand, (datasette_hand.shape[1],datasette_hand.shape[0]))
                             # send data message
-                            message = {
-                                'DATA': 1,
-                                'xy': region.lm_xy_normalized,
-                                'xy_y_rescaled': region.lm_xy_y_rescaled,
-                                'hand_img': crop_hand
-                            }
-                            self.queue.put(message)
+                            
+                            #message = {
+                            #    'DATA': 1,
+                            #    'xy': region.lm_xy_normalized,
+                            #    'xy_y_rescaled': region.lm_xy_y_rescaled,
+                            #    'hand_img': crop_hand
+                            #}
+                            #self.queue.put(message)
+                            if capture_flag:
+                                data = {
+                                    'xy': region.lm_xy_normalized,
+                                    'xy_y_rescaled': region.lm_xy_y_rescaled,
+                                    'hand_img': crop_hand,
+                                    'frame': frame_number
+                                }
+                                temp_capture.append(data)
 
                 self.current_fps.display(datasette_frame, orig=(50,50),color=(240,180,100))
                 cv2.imshow("Landmarks", datasette_frame)
                 cv2.imshow("Right Hand", datasette_hand)
                 key = cv2.waitKey(1) 
                 if key == ord('q') or key == 27:
-                    message = self.stop_message()
-                    self.queue.put(message)
                     # Save depth limits
                     break
 
+                if key == ord('r'):
+                    # start capturing
+                    capture_flag = True                   
+
                 if key == ord('s'):
-                    # save command
-                    message = self.save_message()
-                    self.queue.put(message)
-                    # Choose another label
-                
-                if key == ord('d'):
-                    # save command
-                    message = self.save_depth_message()
-                    self.queue.put(message)
+                    # save
+                    self.capture = temp_capture
+                    capture_flag = False      
+                    temp_capture = []
 
                 elif key == 32:
                     # Pause on space bar
                     cv2.waitKey(0)
-
-
-# Process messages from inference and save
-class Recorder(threading.Thread):
-    def __init__(
-            self, 
-            queue,
-            buffer_size=10
-        ):
-        threading.Thread.__init__(self)
-        self.queue = queue
-        self.active = True
-        self.buffer_size = buffer_size
-        self.buffer = Queue.Queue(self.buffer_size)
-
-    def save(self):
-        pass
-
-    def save_depth(self):
-        pass
-
-    # Process a Hand Landmark Message
-    def process(self, message):        
-        if 'DATA' in message:
-            # Insert data message into the buffer
-            if self.buffer.full():
-                _ = self.buffer.get()
-                self.buffer.put(message)
-            else:
-                self.buffer.put(message)
-
-        # Save buffer to record
-        if 'SAVE' in message:
-            while not self.buffer.empty():
-                msg = self.buffer.get()
-                # Save image to disk and append data point to global structure
-                self.save()
-            
-        # Save depth roi
-        if 'DEPTH' in message:
-            self.save_depth()
-    
-    # Run thread
-    def run(self):
-        while self.active:
-            message = self.queue.get()
-            if 'STOP' in message:
-                self.active = False
-            else:
-                # Process
-                self.process(message)
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -605,16 +548,11 @@ if __name__ == "__main__":
     parser.add_argument('--prheight', default=PARAMS['PREVIEW_HEIGHT'], type=int, help="Preview Height")
     parser.add_argument('--pixbuff', default=PARAMS['HAND_BUFFER_PIXELS'], type=int, help="Extra buffer for hand gestures in pixels")
     parser.add_argument('--hsize', default=PARAMS['HAND_SIZE'], type=int, help="Frame size for showing hand")
+    parser.add_argument('--label', default='P0', type=str, help="Label name")
     args = parser.parse_args()
 
-    # Message Queue
-    messages = Queue.Queue()
-    # Process Thread
-    recorder = Recorder(messages, buffer_size=10)
-    recorder.start()
     # OAKD inference processor
     datasette = DatasetteHandCapture(
-        queue=messages,
         pd_path=args.pdblob,
         pd_score_thresh=args.pdth,
         pd_nms_thresh=args.pdnms,
@@ -624,6 +562,31 @@ if __name__ == "__main__":
         preview_width=args.prwidth,
         preview_height=args.prheight,
         hand_buffer_pixels=args.pixbuff,
-        hand_size=args.hsize
+        hand_size=args.hsize,
+        label=args.label
     )
     datasette.run() 
+
+    # Save capture to file
+    if datasette.capture:
+        # Save to data path: images - format: label_frame_date
+        if not os.path.isdir(PARAMS['DATASET_PATH']):
+            print(f"{PARAMS['DATASET_PATH']} directory does not exists")
+            exit()
+
+        dt = datetime.now().strftime("%Y_%d_%m_%H_%M_%S")
+        root = PARAMS['DATASET_PATH'] + "/" + args.label
+        if not os.path.isdir(root):
+            os.mkdir(root)
+
+        for datapoint in datasette:
+            filename_img = f"{root}/img_{datapoint['frame']}_{dt}.jpeg"
+            cv2.imwrite(filename_img, datapoint['hand_img'])
+            position = {
+                'xy': datapoint['xy'],
+                'xy_y_rescaled': datapoint['xy_y_rescaled']
+            } 
+            filename_pos = f"{root}/pos_{datapoint['frame']}_{dt}.pkl"
+            pickle.dump(position, open(filename_pos, "wb"))
+
+

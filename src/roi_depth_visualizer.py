@@ -335,6 +335,7 @@ class DepthTheremin:
         ax.axline((min_z, max_y_min_z), (max_z, max_y_max_z), ls='dashed', color='r', linewidth=1.2)
         ax.set_xlabel("Z")
         ax.set_ylabel("Y")
+        ax.invert_yaxis()
         # Random initial plot (will be update every frame)
         plot = ax.scatter(z, y, marker='+', color='k', s=2.2)
         centroid_plot = ax.scatter(centroid_z, centroid_y, marker='X', color='r', s=20)
@@ -460,10 +461,10 @@ class DepthTheremin:
                 topy_lh = y_coordinate_px(self.depth_roi['left_hand']['topy'])
                 bottomy_lh = y_coordinate_px(self.depth_roi['left_hand']['bottomy'])
                 # Get yz limits (left hand)
-                min_y_min_z_lh = y_coordinate_mm(topy_lh, self.depth_threshold_min)
-                max_y_min_z_lh = y_coordinate_mm(bottomy_lh, self.depth_threshold_min)
-                min_y_max_z_lh = y_coordinate_mm(topy_lh, self.depth_threshold_max)
-                max_y_max_z_lh = y_coordinate_mm(bottomy_lh, self.depth_threshold_max) 
+                min_y_min_z_lh = y_coordinate_mm(bottomy_lh, self.depth_threshold_min)
+                max_y_min_z_lh = y_coordinate_mm(topy_lh, self.depth_threshold_min)
+                min_y_max_z_lh = y_coordinate_mm(bottomy_lh, self.depth_threshold_max)
+                max_y_max_z_lh = y_coordinate_mm(topy_lh, self.depth_threshold_max) 
 
                 # Matplotlib plot
                 init_xz = False

@@ -310,6 +310,7 @@ class DepthTheremin:
             # define inline function to get coordinates in mm and px
             x_coordinate_mm = lambda x, z: ((x - PARAMS['INTRINSICS_RIGHT_CX'])*z)/PARAMS['INTRINSICS_RIGHT_FX']
             x_coordinate_px = lambda x: int(x * self.depth_res_w)
+            y_coordinate_mm = lambda y, z: ((y - PARAMS['INTRINSICS_RIGHT_CY'])*z)/PARAMS['INTRINSICS_RIGHT_FY']            
             y_coordinate_px = lambda y: int(y * self.depth_res_h)
             distance_to_antenna = lambda x, z: np.sqrt((x - self.antenna_x)**2 + (z - self.antenna_z)**2)
 
@@ -319,38 +320,81 @@ class DepthTheremin:
                 bottomx_rh = x_coordinate_px(self.depth_roi['right_hand']['bottomx']) 
                 topy_rh = y_coordinate_px(self.depth_roi['right_hand']['topy'])
                 bottomy_rh = y_coordinate_px(self.depth_roi['right_hand']['bottomy'])           
-
-                # Get limits
-                #min_x_min_z = ((topx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_min)/PARAMS['INTRINSICS_RIGHT_FX']
-                #max_x_min_z = ((bottomx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_min)/PARAMS['INTRINSICS_RIGHT_FX']
-                #min_x_max_z = ((topx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_max)/PARAMS['INTRINSICS_RIGHT_FX']
-                #max_x_max_z = ((bottomx_rh - PARAMS['INTRINSICS_RIGHT_CX'])*self.depth_threshold_max)/PARAMS['INTRINSICS_RIGHT_FX']
-
+                # Get xz limits (right hand)
                 min_x_min_z_rh = x_coordinate_mm(topx_rh, self.depth_threshold_min)
                 max_x_min_z_rh = x_coordinate_mm(bottomx_rh, self.depth_threshold_min)
                 min_x_max_z_rh = x_coordinate_mm(topx_rh, self.depth_threshold_max)
                 max_x_max_z_rh = x_coordinate_mm(bottomx_rh, self.depth_threshold_max) 
-                
-                # Fixed parameters left hand
-                topx_lh = x_coordinate_px(self.depth_roi['left_hand']['topx'])
-                bottomx_lh = x_coordinate_px(self.depth_roi['left_hand']['bottomx']) 
-                topy_lh = y_coordinate_px(self.depth_roi['left_hand']['topy'])
-                bottomy_lh = y_coordinate_px(self.depth_roi['left_hand']['bottomy'])           
-
                 # Distances to antena (right hand)
                 d_min_x_min_z_rh = distance_to_antenna(min_x_min_z_rh, self.depth_threshold_min)
                 d_max_x_min_z_rh = distance_to_antenna(max_x_min_z_rh, self.depth_threshold_min)
                 d_min_x_max_z_rh = distance_to_antenna(min_x_max_z_rh, self.depth_threshold_max)
                 d_max_x_max_z_rh = distance_to_antenna(max_x_max_z_rh, self.depth_threshold_max)
-
+                # Fixed parameters left hand
+                topx_lh = x_coordinate_px(self.depth_roi['left_hand']['topx'])
+                bottomx_lh = x_coordinate_px(self.depth_roi['left_hand']['bottomx']) 
+                topy_lh = y_coordinate_px(self.depth_roi['left_hand']['topy'])
+                bottomy_lh = y_coordinate_px(self.depth_roi['left_hand']['bottomy'])
+                # Get yz limits (left hand) y is inverted
+                min_y_min_z_lh = y_coordinate_mm(bottomy_lh, self.depth_threshold_min)
+                max_y_min_z_lh = y_coordinate_mm(topy_lh, self.depth_threshold_min)
+                min_y_max_z_lh = y_coordinate_mm(bottomy_lh, self.depth_threshold_max)
+                max_y_max_z_lh = y_coordinate_mm(topy_lh, self.depth_threshold_max) 
+                # Get min and max y coordinate
+                # y_min = min(min_y_min_z_lh, max_y_min_z_lh, min_y_max_z_lh, max_y_max_z_lh)
+                # y_max = max(min_y_min_z_lh, max_y_min_z_lh, min_y_max_z_lh, max_y_max_z_lh)
+                # it seems like y is inverted
+                y_min = max_y_min_z_lh
+                y_max = min_y_min_z_lh
+                # Min and max distances to antenna
                 dmin_rh = min(d_min_x_min_z_rh, d_max_x_min_z_rh, d_min_x_max_z_rh, d_max_x_max_z_rh)
                 dmax_rh = max(d_min_x_min_z_rh, d_max_x_min_z_rh, d_min_x_max_z_rh, d_max_x_max_z_rh)
-                ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
-                print(f"[{ts}]: Distances: {d_min_x_min_z_rh}, {d_max_x_min_z_rh}, {d_min_x_max_z_rh}, {d_max_x_max_z_rh}")
-                print(f"Min: {dmin_rh}")
-                print(f"Max: {dmax_rh}")
+                
+                # Get diagonal vector and distance (we could try with antenna reference)
+                diag_x = max_x_max_z_rh-self.antenna_x
+                diag_z = self.depth_threshold_max-self.antenna_z
+                diag_distance = np.sqrt(diag_x**2 + diag_z**2)
+                diag_x_u = diag_x/diag_distance
+                diag_z_u = diag_z/diag_distance
+                vector_u = np.array([diag_x_u, diag_z_u])
+                # function to calculate the vector projection
+                #def vector_projection(x, z):
+                #    vector_p = np.array([x-self.antenna_x, z-self.antenna_z])
+                #    p_proj_u = vector_u*(np.dot(vector_u, vector_p))
+                #    proj_distance = np.linalg.norm(p_proj_u)
+                #    p_proj_u_x = p_proj_u[0] + self.antenna_x
+                #    p_proj_u_z = p_proj_u[1] + self.antenna_z
+                #    return p_proj_u_x, p_proj_u_z, proj_distance
 
-                # Display Loop
+                # Send message with the settings starting values
+                message = {
+                    'CONFIG': 1,
+                    'roi': {
+                        'left': {
+                            'topx': topx_lh,
+                            'topy': topy_lh,
+                            'bottomx': bottomx_lh,
+                            'bottomy': bottomy_lh,
+                            'y_min': y_min,
+                            'y_max': y_max
+                        },
+                        'right': {
+                            'topx': topx_rh,
+                            'topy': topy_rh,
+                            'bottomx': bottomx_rh,
+                            'bottomy': bottomy_rh,
+                            'dmin': dmin_rh,
+                            'dmax': dmax_rh
+                        }
+                    },
+                    'antenna_x': self.antenna_x,
+                    'antenna_z': self.antenna_z,
+                    'depth_threshold_min': self.depth_threshold_min,
+                    'depth_threshold_max': self.depth_threshold_max
+                }
+                self.queue.put(message)
+
+                # Stream and Display Loop
                 while True:
                     self.current_fps.update()
                     # Get frame
@@ -360,19 +404,7 @@ class DepthTheremin:
                     # Send data to queue (only right hand at the moment)
                     message = {
                         'DATA': 1,
-                        'depth': self.depth_frame,
-                        'roi': {
-                            'topx': topx_rh,
-                            'topy': topy_rh,
-                            'bottomx': bottomx_rh,
-                            'bottomy': bottomy_rh
-                        },
-                        'antenna_x': self.antenna_x,
-                        'antenna_z': self.antenna_z,
-                        'depth_threshold_min': self.depth_threshold_min,
-                        'depth_threshold_max': self.depth_threshold_max,
-                        'dmin': dmin_rh,
-                        'dmax': dmax_rh
+                        'depth': self.depth_frame
                     }
                     self.queue.put(message)
 
@@ -441,6 +473,7 @@ class SynthMessageProcessor(threading.Thread):
         self.dmin = adjust_dmin
         self.dmax = adjust_dmax
         self.dist_function = dist_function
+        self.config = None
 
         # Scale
         self.scale = scale
@@ -450,69 +483,68 @@ class SynthMessageProcessor(threading.Thread):
 
     # Process a Hand Landmark Message
     def process(self, message):
+        # Initial Configuration
+        if 'CONFIG' in message:
+            self.config = message
+            self.dmin = self.config['roi']['right']['dmin']
+            self.dmax = self.config['roi']['right']['dmax']
+            self.range_f = self.dmax - self.dmin
+            self.ymin = self.config['roi']['left']['y_min']
+            self.ymax = self.config['roi']['left']['y_max']
+            self.range_y = self.ymax - self.ymin
+
+            print(self.config)
+        # Data message
         if 'DATA' in message:
-            self.synth.set_volume(1)
-            # Only z
-            #zs = get_z(message['depth'], message['depth_threshold_max'], message['depth_threshold_min'])
-            #distance = np.mean(zs)
-            #print(f"----> Centroid Z: {centroid_z}")
+            if self.config is not None:
 
-            points = transform_xyz(
-                message['depth'], 
-                message['roi']['topx'], 
-                message['roi']['bottomx'], 
-                message['roi']['topy'], 
-                message['roi']['bottomy'], 
-                message['depth_threshold_min'],
-                message['depth_threshold_max']
-            )
-            if points is not None:
-                # Calculates Centroid (x,y), ignore y
-                # and distance to Antenna center (kind of)
-                points_x = points[0]
-                points_z = points[2]
-                if points_x.size > 0 and points_z.size > 0:
-                    
-                    
-                    # centroid_x = np.mean(points_x)
-                    # centroid_z = np.mean(points_z)
-                
-                    # distance = np.sqrt((centroid_x-message['antenna_x'])**2 + (centroid_z-message['antenna_z'])**2)
-                    
-                    centroid_x, centroid_z, distance = self.dist_function(points_x, points_z, message['antenna_x'], message['antenna_z'])
-                    if distance is not None:
-                        range_ = message['dmax'] - message['dmin']
-                        f0 = np.clip(distance, message['dmin'], message['dmax']) - message['dmin']
-                        f0 = 1 - f0 / range_
-                    
-                # only x
-                # distance = centroid_x-message['antenna_x']
-                # print(distance)
-                # r1 = message['antenna_x']
-                # r2 = 1000
-                # range_ = r2 - r1
-                # f0 = np.clip(distance, r1, r2) - r1
-                # f0 = 1 - f0 / range_
+                # Right Hand Point cloud (xyz):
+                points_rh = transform_xyz(
+                    message['depth'],
+                    self.config['roi']['right']['topx'],
+                    self.config['roi']['right']['bottomx'],
+                    self.config['roi']['right']['topy'],
+                    self.config['roi']['right']['bottomy'],
+                    self.config['depth_threshold_min'],
+                    self.config['depth_threshold_max']
+                )
 
+                if points_rh is not None:
+                    # Calculates Centroid (x,y), ignore y
+                    # and calculate distance to Antenna center (kind of)
+                    points_rh_x = points_rh[0]
+                    points_rh_z = points_rh[2]
+                    if points_rh_x.size > 0 and points_rh_z.size > 0:
+                        _, _, distance = self.dist_function(points_rh_x, points_rh_z, self.config['antenna_x'], self.config['antenna_z'])
+                        if distance is not None:
+                            f0 = np.clip(distance, self.dmin, self.dmax) - self.dmin
+                            f0 = 1 - f0 / self.range_f
+                            freq = self.scale.from_0_1_to_f(f0)
+                            # send to synth
+                            self.synth.set_tone(freq)
 
-                        print(f0)
-                #print("----> (x, z) Info:")
-                #print(f"----> Centroid (X, Z): ({centroid_x}, {centroid_z})")
-                #print(f"----> Distance to ({self.antenna_x}, {self.antenna_z}): {distance}")
+                # Left Hand Point cloud (xyz):
+                points_lh = transform_xyz(
+                    message['depth'],
+                    self.config['roi']['left']['topx'],
+                    self.config['roi']['left']['bottomx'],
+                    self.config['roi']['left']['topy'],
+                    self.config['roi']['left']['bottomy'],
+                    self.config['depth_threshold_min'],
+                    self.config['depth_threshold_max']
+                )
 
+                if points_lh is not None:
+                    points_lh_y = points_lh[1]
+                    points_lh_z = points_lh[2]
 
-                # process the thresholds
-                #rang = message['depth_threshold_max'] - message['depth_threshold_min']
-                #f0 = np.clip(distance, message['depth_threshold_min'], message['depth_threshold_max']) - message['depth_threshold_min']
-                #f0 = 1 - f0 / rang
-                #print(f0)
-                
-                
-                
-                        freq = self.scale.from_0_1_to_f(f0)
-                        print(freq)
-                        # send to synth
-                        self.synth.set_tone(freq)
+                    if points_lh_y.size > 0 and points_lh_z.size > 0:
+                        centroid_y, _ = utils.y_filter_out_(points_lh_y, points_lh_z)
+                        if centroid_y is not None:
+                            v0 = np.clip(centroid_y, self.ymin, self.ymax) - self.ymin
+                            v0 = 1 - v0 / self.range_y
+                            # send vol to synth
+                            self.synth.set_volume(v0)
 
     # Run thread
     def run(self):

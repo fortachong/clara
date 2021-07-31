@@ -45,7 +45,7 @@ def distance_filter_out_(points_x, points_z, antenna_x, antenna_z):
         cond_x = (points_xz[0,:] >= liminfx) & (points_xz[0,:] <= limsupx)
         cond_z = (points_xz[1,:] >= liminfz) & (points_xz[1,:] <= limsupz)
         filterd_xz = points_xz[:,cond_x | cond_z]
-        if points_xz.size > 0:
+        if filterd_xz.size > 0:
             centroid_x = np.mean(filterd_xz[0,:])
             centroid_z = np.mean(filterd_xz[1,:])
             distance = np.sqrt((centroid_x-antenna_x)**2 + (centroid_z-antenna_z)**2)
@@ -83,6 +83,33 @@ def distance_filter_fingers_(points_x, points_z, antenna_x, antenna_z):
                 centroid_z = np.mean(fingers_xz[1,:])
                 distance = np.sqrt((centroid_x-antenna_x)**2 + (centroid_z-antenna_z)**2)
     return centroid_x, centroid_z, distance
+
+
+# filter outliers, only y
+def y_filter_out_(points_y, points_z, only_y=False):
+    centroid_y = None
+    centroid_z = None
+    if not (points_y is None or points_z is None):
+        # quantiles
+        q1y, q3y = np.quantile(points_y, [0.25, 0.75])
+        q1z, q3z = np.quantile(points_z, [0.25, 0.75])
+        iqry = q3y - q1y
+        iqrz = q3z - q1z
+        # limits to determine outliers
+        liminfy = q1y - 1.5*iqry
+        limsupy = q3y + 1.5*iqry
+        liminfz = q1z - 1.5*iqrz
+        limsupz = q3z + 1.5*iqrz
+        # filter outliers (only include points between liminf and limsup)
+        points_yz = np.vstack([points_y, points_z])
+        cond_y = (points_yz[0,:] >= liminfy) & (points_yz[0,:] <= limsupy)
+        cond_z = (points_yz[1,:] >= liminfz) & (points_yz[1,:] <= limsupz)
+        filterd_yz = points_yz[:,cond_y | cond_z]
+        if filterd_yz.size > 0:
+            centroid_y = np.mean(filterd_yz[0,:])
+            if not only_y:
+                centroid_z = np.mean(filterd_yz[1,:])
+    return centroid_y, centroid_z
 
 
 # Returns point cloud
@@ -224,6 +251,7 @@ def init_plot_yz(
     ax.axline((max_z, y0), (max_z, y1), ls='dashed', color='r', linewidth=1.2)
     ax.axline((min_z, min_y_min_z), (max_z, min_y_max_z), ls='dashed', color='r', linewidth=1.2)
     ax.axline((min_z, max_y_min_z), (max_z, max_y_max_z), ls='dashed', color='r', linewidth=1.2)
+    ax.invert_yaxis()
     ax.set_xlabel("Z")
     ax.set_ylabel("Y")
     # Random initial plot (will be update every frame)

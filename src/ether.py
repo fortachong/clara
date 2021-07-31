@@ -11,6 +11,8 @@
 # in the future
 
 import os
+from multiprocessing import Process, Queue, Value
+import time
 import cv2
 import depthai as dai
 import numpy as np
@@ -20,8 +22,6 @@ from pathlib import Path
 from FPS import FPS, now
 import equal_tempered as eqtmp
 from pythonosc import udp_client
-import threading
-import queue as Queue
 import argparse
 import pickle
 import utils
@@ -217,7 +217,7 @@ class Ether:
         return pipeline
 
     # Capture Depth using ROI specified, stream all data through a queue
-    def capture_depth(self, queue, stop_flag):
+    def stream_depth(self, queue, stop_flag):
         # Create pipeline
         self.pipeline = self.create_pipeline_depth()
         self.check_pipeline()
@@ -321,8 +321,108 @@ class Ether:
                     # Show threshold image
                     self.show_depth_map_segmentation(topx_rh, topy_rh, bottomx_rh, bottomy_rh)
                     
-                    # Commands
-                    key = cv2.waitKey(1) 
-                    if key == ord('q') or key == 27:
-                        # quit
+                    if stop_flag.value:
                         break
+
+                cv2.destroyAllWindows()
+
+
+# Generates sound from stream
+def send_control_to_synth(queue, flag_start, flag_stop):
+    try:
+        while True:
+            if flag_start.value:
+                message = queue.get()
+                print("Synth processor: ")
+                print(message)
+            if flag_stop.value:
+                print("Stopping synth...")
+                break                
+    except KeyboardInterrupt:
+        flag_stop.value = True
+
+
+if __name__ == "__main__": 
+    # Arguments
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--fps', default=PARAMS['FPS'], type=int, help="Player rate")
+    parser.add_argument('--res', default=PARAMS['DEPTH_RESOLUTION'], type=int, help="Depth Resolution used")
+    parser.add_argument('--antenna', default=PARAMS['ANTENNA_ROI_FILENAME'], type=str, help="ROI of the Theremin antenna")
+    parser.add_argument('--body', default=PARAMS['BODY_ROI_FILENAME'], type=str, help="ROI of body position")
+    parser.add_argument('--proj', default=0, type=int, help='Use projection')
+    parser.add_argument('--file', type=str, help="Capture File", required=True)
+    args = parser.parse_args()
+
+    print(team.banner)
+
+    # Variables to sync all processes
+    START = Value('b', False)
+    STOP = Value('b', False)
+
+    # Read files and configure
+    ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
+    print(f"[{ts}] Reading ROIs...")
+    filename_1 = f"{PARAMS['DATASET_PATH']}/{args.body}"
+    filename_2 = f"{PARAMS['DATASET_PATH']}/{args.antenna}"
+    rois = None
+    with open(filename_1, "rb") as fl1:
+        with open(filename_2, "rb") as fl2:
+            rois = {}
+            rois['body'] = pickle.load(fl1)
+            rois['antenna'] = pickle.load(fl2)
+            for k, v in rois['body'].items(): print(f"{k}: {v}")
+            for k, v in rois['antenna'].items(): print(f"{k}: {v}")        
+
+    if rois is None:
+        ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
+        print(f"[{ts}]: Body and Antenna ROIs not defined: Please run configuration")
+        exit()
+
+    # Read ROI from file
+    filename = PARAMS['DATASET_PATH'] + "/" + PARAMS['DEPTH_ROI_FILENAME']
+    ts = datetime.now().strftime("%Y-%d-%m %H:%M:%S")
+    roi = None
+    if os.path.isfile(filename):
+        print(f"[{ts}]: Reading ROI from file: {filename}")
+        with open(filename, "rb") as file:
+            roi = pickle.load(file)
+            print(roi)
+            rois['left_hand']= roi['left_hand']
+            rois['right_hand']= roi['right_hand']
+    else:
+        print(f"[{ts}]: No Hands ROIs defined: {filename}")
+        exit()
+
+    # Depth based Theremin 
+    ether = Ether(
+        fps=args.fps,
+        cam_resolution=args.res,
+        depth_threshold_min=rois['antenna']['z'] + PARAMS['ANTENNA_BUFFER'],
+        depth_threshold_max=rois['body']['z'] - PARAMS['BODY_BUFFER'],
+        antenna_roi=rois['antenna']
+    )
+    ether.set_ROI(roi)
+
+    # Synth
+    synth_q = Queue()
+    # Gui
+    gui_q = Queue()
+
+    # Processes
+    procs = []
+    pr2 = Process(target=send_control_to_synth, args=(synth_q, START, STOP))
+    pr2.start()
+    #pr3
+    procs.append(pr2)
+
+    # Start Streaming depth values:
+    START.value = True
+    try:
+        ether.stream_depth(synth_q, STOP)
+    except KeyboardInterrupt:
+        STOP.value = True
+ 
+    # complete the processes
+    for proc in procs:
+        proc.join()   
+    
