@@ -79,7 +79,7 @@ PARAMS = {
     #'LM_DETECTION_MODEL_PATH': "models/hand_landmark_6_shaves.blob",
     'LM_THRESHOLD': 0.6,
     'LM_INPUT_LENGTH': 224,
-    'FPS': 2,
+    'FPS': 10,
     'ROI_DP_LOWER_TH': 100,
     'ROI_DP_UPPER_TH': 10000,
     'INITIAL_ROI_TL': dai.Point2f(0.4, 0.4),
@@ -472,7 +472,7 @@ class DatasetteHandCapture:
                             cv2.rectangle(datasette_frame, (topx, topy), (bottomx, bottomy), (255,255,255), 1)
                             crop_hand = datasette_frame_video[topy:bottomy+1, topx:bottomx+1]
                             # pad = abs(crop_hand.shape[0] - crop_hand.shape[1]) // 2
-                            chand = crop_hand.copy()
+                            datasette_hand = crop_hand.copy()
                             #if crop_hand.shape[0] > crop_hand.shape[1]:
                             #    chand = cv2.copyMakeBorder(
                             #                    crop_hand,

@@ -6,8 +6,9 @@ from team import banner
 # Use aruco markers
 
 menu = """
-** Ether theremin tools **
+** Ether theremin ROIs configuration and capture tools **
 
+Devices Info: [i]
 Show Configuration: [c]
 Configuration Step 1 - Body Position: [1]
 Configuration Step 2 - Antenna Position: [2]
@@ -18,7 +19,7 @@ Run with Visualization: [6]
 Press [q] to quit
 
 """
-cmds = ['1', '2', '3', '4', '5', '6', 'c']
+cmds = ['1', '2', '3', '4', '5', '6', 'c', 'i']
 if __name__ == "__main__":
     print(banner)
     while True:
@@ -39,6 +40,10 @@ if __name__ == "__main__":
             # Depth min and max
             # Map (matplotlib)
             subprocess.run("python show_config.py")
+
+        if cmd == 'i':
+            # Get info
+            subprocess.run("python dinfo.py")
             
         # Configuration Step 1: Body position
         if cmd == '1':
