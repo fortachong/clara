@@ -39,7 +39,8 @@ def init_plot_xz(
         min_z, max_z, 
         antenna_x, antenna_z, 
         min_x_min_z, max_x_min_z, 
-        min_x_max_z, max_x_max_z
+        min_x_max_z, max_x_max_z,
+        notes=None
     ):
     c_f_x = centroid_f_x
     if centroid_f_x is None:
@@ -80,6 +81,9 @@ def init_plot_xz(
     ax.axline((max_x_min_z, min_z), (max_x_max_z, max_z), ls='dashed', color=color_region, linewidth=1.2)
     ax.set_xlabel("X")
     ax.set_ylabel("Z")
+    if notes is not None:
+        ax.scatter(notes[0], notes[1], marker='o', color=color_diag, s=80, alpha=0.60)
+      
     # Random initial plot (will be update every frame)
     plot = ax.scatter(x, z, marker='.', color=color_points, s=90, alpha=0.10)
     centroid_plot = ax.scatter(centroid_x, centroid_z, marker='X', color='r', s=20)
@@ -225,6 +229,19 @@ if __name__ == "__main__":
                 p_proj_u_x = p_proj_u[0] + antenna_x
                 p_proj_u_z = p_proj_u[1] + antenna_z
                 return p_proj_u_x, p_proj_u_z, proj_distance
+
+            # 3 octaves                
+            octs = 3
+            ht = 3*12
+            nvectors = np.linspace(0, 1, ht) * diag_distance
+            notes_ = np.tile(nvectors, 2).reshape((2, -1))
+            #print(notes_.shape)
+            #print(notes_)
+            us = np.broadcast_to(vector_u, (ht, 2))
+            #print(us.shape)
+            #print(us)
+            notes = us.T*notes_ + np.broadcast_to(np.array([antenna_x, antenna_z]), (ht, 2)).T
+            #print(notes)
                         
             # Timestamps
             timestamps = []
@@ -351,7 +368,8 @@ if __name__ == "__main__":
                                 depth_threshold_max,
                                 antenna_x, antenna_z,
                                 min_x_min_z_rh, max_x_min_z_rh, 
-                                min_x_max_z_rh, max_x_max_z_rh
+                                min_x_max_z_rh, max_x_max_z_rh,
+                                notes
                         )
                         CONTEXT['init_xz'] = True
 
