@@ -15,11 +15,11 @@ if __name__ == "__main__":
             print(m_rgb)
             print()
             # Left and Right 400
-            m_left = np.array(calibData.getCameraIntrinsics(dai.CameraBoardSocket.LEFT, 640, 480), dtype='object')
-            print("LEFT Camera (640, 480) intrinsics...")
+            m_left = np.array(calibData.getCameraIntrinsics(dai.CameraBoardSocket.LEFT, 640, 400), dtype='object')
+            print("LEFT Camera (640, 400) intrinsics...")
             print(m_left)
-            m_right = np.array(calibData.getCameraIntrinsics(dai.CameraBoardSocket.RIGHT, 640, 480), dtype='object')
-            print("RIGTH Camera (640, 480) intrinsics...")
+            m_right = np.array(calibData.getCameraIntrinsics(dai.CameraBoardSocket.RIGHT, 640, 400), dtype='object')
+            print("RIGTH Camera (640, 400) intrinsics...")
             print(m_right)
             print()
             # Left and Right 720

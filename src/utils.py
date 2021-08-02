@@ -77,6 +77,7 @@ def distance_filter_fingers_(points_x, points_z, antenna_x, antenna_z):
         if filterd_xz.size > 0:
             # further filter the 
             cond_z_fingers = (filterd_xz[1,:] <= centroid_z)
+            # cond_z_fingers = (filterd_xz[1,:] <= q3z)
             fingers_xz = filterd_xz[:,cond_z_fingers]
             if fingers_xz.size > 0:
                 centroid_x = np.mean(fingers_xz[0,:])

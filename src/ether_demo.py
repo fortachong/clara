@@ -97,8 +97,6 @@ class DepthTheremin:
             self, 
             queue,
             fps=30,
-            preview_width=640,
-            preview_height=400,
             antenna_roi=None,
             depth_stream_name='depth', 
             depth_threshold_max=700,
@@ -108,6 +106,8 @@ class DepthTheremin:
         # Message processing queue
         self.queue = queue
         # Camera options = 400, 720, 800 for depth
+        cam_res = PARAMS['DEPTH_CAMERA_RESOLUTIONS']
+        cam_resolution = str(cam_resolution)
         cam_res = {
             '400': (
                     dai.MonoCameraProperties.SensorResolution.THE_400_P,
@@ -145,10 +145,6 @@ class DepthTheremin:
         # Depth thresholds (experimentally obtained)
         self.depth_threshold_max = depth_threshold_max
         self.depth_threshold_min = depth_threshold_min
-
-        # Preview size
-        self.preview_width = preview_width
-        self.preview_height = preview_height
 
         # Pipeline
         self.pipeline = None
@@ -191,7 +187,7 @@ class DepthTheremin:
             if self.antenna_roi is not None:
                 cv2.line(depth_frame_color, 
                     (self.antenna_roi['absolute']['topx'], 0),
-                    (self.antenna_roi['absolute']['topx'], self.preview_height),
+                    (self.antenna_roi['absolute']['topx'], self.depth_res_h),
                     (0,255,0),
                     2
                 )
@@ -481,6 +477,10 @@ class SynthMessageProcessor(threading.Thread):
         # Vol
         self.volume = 0
 
+        # Exp
+        self.f0_ = 0
+        self.f0__ = 0
+
     # Process a Hand Landmark Message
     def process(self, message):
         # Initial Configuration
@@ -519,7 +519,10 @@ class SynthMessageProcessor(threading.Thread):
                         if distance is not None:
                             f0 = np.clip(distance, self.dmin, self.dmax) - self.dmin
                             f0 = 1 - f0 / self.range_f
+                            #f0 = (self.f0_ + self.f0__ + f0)/3
                             freq = self.scale.from_0_1_to_f(f0)
+                            self.f0__ = self.f0_
+                            self.f0_ = f0
                             # send to synth
                             self.synth.set_tone(freq)
 
@@ -564,11 +567,10 @@ if __name__ == "__main__":
                         help="IP Address of Supercollider Server")
     parser.add_argument("--scport", default=PARAMS['SC_PORT'], type=int,
                         help="Port of Supercollider Server")
+    parser.add_argument('--res', default=PARAMS['DEPTH_RESOLUTION'], type=int, help="Depth Resolution used")
     parser.add_argument('--fps', default=PARAMS['FPS'], type=int, help="Capture FPS")
     parser.add_argument('--antenna', default=PARAMS['ANTENNA_ROI_FILENAME'], type=str, help="ROI of the Theremin antenna")
     parser.add_argument('--body', default=PARAMS['BODY_ROI_FILENAME'], type=str, help="ROI of body position")
-    parser.add_argument('--prwidth', default=PARAMS['PREVIEW_WIDTH'], type=int, help="Preview Width")
-    parser.add_argument('--prheight', default=PARAMS['PREVIEW_HEIGHT'], type=int, help="Preview Height")
     parser.add_argument('--distance', default=0, type=int, help="Distance mode: 0 -> normal, 1 -> filter outliers, 2 -> only fingers")    
     args = parser.parse_args()
 
@@ -599,8 +601,7 @@ if __name__ == "__main__":
     the = DepthTheremin(
         queue=messages,
         fps=args.fps,
-        preview_width=args.prwidth,
-        preview_height=args.prheight,
+        cam_resolution=args.res,
         depth_threshold_min=rois['antenna']['z'] + PARAMS['ANTENNA_BUFFER'],
         depth_threshold_max=rois['body']['z'] - PARAMS['BODY_BUFFER'],
         antenna_roi=rois['antenna']
@@ -627,7 +628,7 @@ if __name__ == "__main__":
         else:
             dist_func = lambda px, pz, antx, antz: utils.distance_(px, pz, antx, antz)
 
-        scale = eqtmp.EqualTempered(octaves=3, start_freq=220, resolution=100)
+        scale = eqtmp.EqualTempered(octaves=3, start_freq=220, resolution=1000)
         # Create Synthesizer
         synth = EtherSynth(args.scserver, args.scport)
         # Process Thread
