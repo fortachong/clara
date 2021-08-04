@@ -86,6 +86,40 @@ def distance_filter_fingers_(points_x, points_z, antenna_x, antenna_z):
     return centroid_x, centroid_z, distance
 
 
+# mean(filter outliers and only consider fingers and centroid)
+def mean_distance_filter_fingers_centroid(points_x, points_z, antenna_x, antenna_z):
+    centroid_x = np.mean(points_x)
+    centroid_z = np.mean(points_z)
+    distance = None
+
+    if (points_x.size > 0 and points_z.size > 0):
+        # quantiles
+        q1x, q3x = np.quantile(points_x, [0.25, 0.75])
+        q1z, q3z = np.quantile(points_z, [0.25, 0.75])
+        iqrx = q3x - q1x
+        iqrz = q3z - q1z
+        # limits to determine outliers
+        liminfx = q1x - 1.5*iqrx
+        limsupx = q3x + 1.5*iqrx
+        liminfz = q1z - 1.5*iqrz
+        limsupz = q3z + 1.5*iqrz
+        # filter outliers (only include points between liminf and limsup)
+        points_xz = np.vstack([points_x, points_z])
+        cond_x = (points_xz[0,:] >= liminfx) & (points_xz[0,:] <= limsupx)
+        cond_z = (points_xz[1,:] >= liminfz) & (points_xz[1,:] <= limsupz)
+        filterd_xz = points_xz[:,cond_x | cond_z]
+        if filterd_xz.size > 0:
+            # further filter the 
+            cond_z_fingers = (filterd_xz[1,:] <= centroid_z)
+            # cond_z_fingers = (filterd_xz[1,:] <= q3z)
+            fingers_xz = filterd_xz[:,cond_z_fingers]
+            if fingers_xz.size > 0:
+                centroid_x = (centroid_x + np.mean(fingers_xz[0,:]))/2
+                centroid_z = (centroid_z + np.mean(fingers_xz[1,:]))/2
+    
+    distance = np.sqrt((centroid_x-antenna_x)**2 + (centroid_z-antenna_z)**2)
+    return centroid_x, centroid_z, distance
+
 # filter outliers, only y
 def y_filter_out_(points_y, points_z, only_y=False):
     centroid_y = None

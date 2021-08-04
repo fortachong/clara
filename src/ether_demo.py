@@ -101,7 +101,8 @@ class DepthTheremin:
             depth_stream_name='depth', 
             depth_threshold_max=700,
             depth_threshold_min=400,
-            cam_resolution='400'
+            cam_resolution='400',
+            use_projection=0
         ):
         # Message processing queue
         self.queue = queue
@@ -131,6 +132,7 @@ class DepthTheremin:
         self.depth_res_h = cam_res[cam_resolution][2]
         self.depth_fps = fps
         self.depth_stream_name = depth_stream_name
+        self.use_projection = use_projection
         # ROI for depth
         self.depth_topx = 1
         self.depth_bottomx = 0
@@ -252,8 +254,10 @@ class DepthTheremin:
         # Mono Camera Settings
         mono_l.setResolution(self.depth_mono_resolution_left)
         mono_l.setBoardSocket(dai.CameraBoardSocket.LEFT)
+        mono_l.setFps(self.depth_fps)
         mono_r.setResolution(self.depth_mono_resolution_right)
         mono_r.setBoardSocket(dai.CameraBoardSocket.RIGHT)
+        mono_r.setFps(self.depth_fps)
         # Depth and Output
         stereo = pipeline.createStereoDepth()
         xout_depth = pipeline.createXLinkOut()
@@ -380,7 +384,8 @@ class DepthTheremin:
                             'bottomx': bottomx_rh,
                             'bottomy': bottomy_rh,
                             'dmin': dmin_rh,
-                            'dmax': dmax_rh
+                            'dmax': dmax_rh,
+                            'vector_u': vector_u
                         }
                     },
                     'antenna_x': self.antenna_x,
@@ -458,9 +463,12 @@ class SynthMessageProcessor(threading.Thread):
             queue, 
             synth, 
             scale,
+            left_hand_upper_th=0.8,
+            left_hand_lower_th=0.2,
             adjust_dmin=20,
             adjust_dmax=500,
-            dist_function=None
+            dist_function=None,
+            use_projection=0
         ):
         threading.Thread.__init__(self)
         self.synth = synth
@@ -470,6 +478,9 @@ class SynthMessageProcessor(threading.Thread):
         self.dmax = adjust_dmax
         self.dist_function = dist_function
         self.config = None
+        self.use_projection = use_projection
+        self.left_hand_upper_threshold = left_hand_upper_th
+        self.left_hand_lower_threshold = left_hand_lower_th
 
         # Scale
         self.scale = scale
@@ -480,6 +491,7 @@ class SynthMessageProcessor(threading.Thread):
         # Exp
         self.f0_ = 0
         self.f0__ = 0
+
 
     # Process a Hand Landmark Message
     def process(self, message):
@@ -493,6 +505,16 @@ class SynthMessageProcessor(threading.Thread):
             self.ymax = self.config['roi']['left']['y_max']
             self.range_y = self.ymax - self.ymin
 
+            # Define the projection function
+            def vector_projection(x, z):
+                vector_p = np.array([x-self.config['antenna_x'], z-self.config['antenna_z']])
+                p_proj_u = self.config['vector_u']*(np.dot(self.config['vector_u'], vector_p))
+                proj_distance = np.linalg.norm(p_proj_u)
+                p_proj_u_x = p_proj_u[0] + self.config['antenna_x']
+                p_proj_u_z = p_proj_u[1] + self.config['antenna_z']
+                return p_proj_u_x, p_proj_u_z, proj_distance
+
+            self.func_project_ = vector_projection
             print(self.config)
         # Data message
         if 'DATA' in message:
@@ -515,14 +537,25 @@ class SynthMessageProcessor(threading.Thread):
                     points_rh_x = points_rh[0]
                     points_rh_z = points_rh[2]
                     if points_rh_x.size > 0 and points_rh_z.size > 0:
-                        _, _, distance = self.dist_function(points_rh_x, points_rh_z, self.config['antenna_x'], self.config['antenna_z'])
+                        centroid_x, centroid_z, distance = self.dist_function(
+                            points_rh_x, 
+                            points_rh_z, 
+                            self.config['antenna_x'], 
+                            self.config['antenna_z']
+                        )
+
+                        # use projection along the diagonal
+                        if self.use_projection:
+                            if distance is not None:
+                                _, _, distance = self.func_project_(centroid_x, centroid_z)
+
                         if distance is not None:
                             f0 = np.clip(distance, self.dmin, self.dmax) - self.dmin
                             f0 = 1 - f0 / self.range_f
-                            #f0 = (self.f0_ + self.f0__ + f0)/3
+                            # f0 = (self.f0_ + self.f0__ + f0)/3
                             freq = self.scale.from_0_1_to_f(f0)
-                            self.f0__ = self.f0_
-                            self.f0_ = f0
+                            # self.f0__ = self.f0_
+                            # self.f0_ = f0
                             # send to synth
                             self.synth.set_tone(freq)
 
@@ -546,6 +579,8 @@ class SynthMessageProcessor(threading.Thread):
                         if centroid_y is not None:
                             v0 = np.clip(centroid_y, self.ymin, self.ymax) - self.ymin
                             v0 = 1 - v0 / self.range_y
+                            if v0 > self.left_hand_upper_threshold: v0 = 1
+                            if v0 < self.left_hand_lower_threshold: v0 = 0
                             # send vol to synth
                             self.synth.set_volume(v0)
 
@@ -572,6 +607,7 @@ if __name__ == "__main__":
     parser.add_argument('--antenna', default=PARAMS['ANTENNA_ROI_FILENAME'], type=str, help="ROI of the Theremin antenna")
     parser.add_argument('--body', default=PARAMS['BODY_ROI_FILENAME'], type=str, help="ROI of body position")
     parser.add_argument('--distance', default=0, type=int, help="Distance mode: 0 -> normal, 1 -> filter outliers, 2 -> only fingers")    
+    parser.add_argument('--proj', default=0, type=int, help="1 -> Use projection over diagonal")
     args = parser.parse_args()
 
     print(team.banner)
@@ -604,7 +640,8 @@ if __name__ == "__main__":
         cam_resolution=args.res,
         depth_threshold_min=rois['antenna']['z'] + PARAMS['ANTENNA_BUFFER'],
         depth_threshold_max=rois['body']['z'] - PARAMS['BODY_BUFFER'],
-        antenna_roi=rois['antenna']
+        antenna_roi=rois['antenna'],
+        use_projection=args.proj
     )
 
     # Read ROI from file
@@ -625,6 +662,8 @@ if __name__ == "__main__":
             dist_func = lambda px, pz, antx, antz: utils.distance_filter_out_(px, pz, antx, antz)
         elif args.distance == 2:
             dist_func = lambda px, pz, antx, antz: utils.distance_filter_fingers_(px, pz, antx, antz)
+        elif args.distance == 3:
+            dist_func = lambda px, pz, antx, antz: utils.mean_distance_filter_fingers_centroid(px, pz, antx, antz)
         else:
             dist_func = lambda px, pz, antx, antz: utils.distance_(px, pz, antx, antz)
 

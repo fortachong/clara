@@ -64,7 +64,8 @@ class DepthTheremin:
             adjust_dmin=20,
             adjust_dmax=500,
             show_plot=0,
-            distance=0
+            distance=0,
+            use_projection=0
         ):
         # Message processing queue (delete)
         self.queue = queue
@@ -117,6 +118,9 @@ class DepthTheremin:
 
         # Distance type
         self.distance = distance
+
+        # Use projection
+        self.use_projection = use_projection
 
     # Transform a region defined by topx, bottomx, topy, bottomy as a point cloud
     def transform_xyz(self, topx, bottomx, topy, bottomy):
@@ -279,7 +283,7 @@ class DepthTheremin:
         x0, x1 = ax.get_xlim()
         ax.axline((x0, min_z), (x1, min_z), ls='dashed', color='r', linewidth=1.2)
         ax.axline((x0, max_z), (x1, max_z), ls='dashed', color='r', linewidth=1.2)
-        ax.axline((antenna_x, min_z), (min_x_max_z, max_z), ls='dashed', color='r', linewidth=1.2)
+        ax.axline((min_x_min_z, min_z), (min_x_max_z, max_z), ls='dashed', color='r', linewidth=1.2)
         ax.axline((max_x_min_z, min_z), (max_x_max_z, max_z), ls='dashed', color='r', linewidth=1.2)
         ax.set_xlabel("X")
         ax.set_ylabel("Z")
@@ -378,8 +382,10 @@ class DepthTheremin:
         # Mono Camera Settings
         mono_l.setResolution(self.depth_mono_resolution_left)
         mono_l.setBoardSocket(dai.CameraBoardSocket.LEFT)
+        mono_l.setFps(self.depth_fps)
         mono_r.setResolution(self.depth_mono_resolution_right)
         mono_r.setBoardSocket(dai.CameraBoardSocket.RIGHT)
+        mono_r.setFps(self.depth_fps)
         # Depth and Output
         stereo = pipeline.createStereoDepth()
         xout_depth = pipeline.createXLinkOut()
@@ -441,6 +447,8 @@ class DepthTheremin:
                 dist_func = lambda px, pz, antx, antz: utils.distance_filter_out_(px, pz, antx, antz)
             elif self.distance == 2:
                 dist_func = lambda px, pz, antx, antz: utils.distance_filter_fingers_(px, pz, antx, antz)
+            elif self.distance == 3:
+                dist_func = lambda px, pz, antx, antz: utils.mean_distance_filter_fingers_centroid(px, pz, antx, antz)
             else:
                 dist_func = lambda px, pz, antx, antz: utils.distance_(px, pz, antx, antz)
 
@@ -465,6 +473,25 @@ class DepthTheremin:
                 max_y_min_z_lh = y_coordinate_mm(topy_lh, self.depth_threshold_min)
                 min_y_max_z_lh = y_coordinate_mm(bottomy_lh, self.depth_threshold_max)
                 max_y_max_z_lh = y_coordinate_mm(topy_lh, self.depth_threshold_max) 
+                
+                # Get min and max y coordinate
+                y_min = min(min_y_min_z_lh, max_y_min_z_lh, min_y_max_z_lh, max_y_max_z_lh)
+                y_max = max(min_y_min_z_lh, max_y_min_z_lh, min_y_max_z_lh, max_y_max_z_lh)
+                # Get diagonal vector and distance (we could try with antenna reference)
+                diag_x = max_x_max_z_rh-self.antenna_x
+                diag_z = self.depth_threshold_max-self.antenna_z
+                diag_distance = np.sqrt(diag_x**2 + diag_z**2)
+                diag_x_u = diag_x/diag_distance
+                diag_z_u = diag_z/diag_distance
+                vector_u = np.array([diag_x_u, diag_z_u])
+                # function to calculate the vector projection
+                def vector_projection(x, z):
+                    vector_p = np.array([x-self.antenna_x, z-self.antenna_z])
+                    p_proj_u = vector_u*(np.dot(vector_u, vector_p))
+                    proj_distance = np.linalg.norm(p_proj_u)
+                    p_proj_u_x = p_proj_u[0] + self.antenna_x
+                    p_proj_u_z = p_proj_u[1] + self.antenna_z
+                    return p_proj_u_x, p_proj_u_z, proj_distance
 
                 # Matplotlib plot
                 init_xz = False
@@ -487,11 +514,12 @@ class DepthTheremin:
                         points_z = pc_rh[2]
                         centroid_x, centroid_z, distance = dist_func(points_x, points_z, self.antenna_x, self.antenna_z)
 
+                        if self.use_projection:
+                            if distance is not None:
+                                centroid_x, centroid_z, distance = vector_projection(centroid_x, centroid_z)
+
                         if distance is not None:
 
-                            #centroid_x = np.mean(points_x)
-                            #centroid_z = np.mean(points_z)
-                            #distance = np.sqrt((centroid_x-self.antenna_x)**2 + (centroid_z-self.antenna_z)**2)
                             #print("----> (x, z) Info:")
                             #print(f"----> Centroid (X, Z): ({centroid_x}, {centroid_z})")
                             #print(f"----> Distance to ({self.antenna_x}, {self.antenna_z}): {distance}")
@@ -616,6 +644,7 @@ if __name__ == "__main__":
     parser.add_argument('--body', default=PARAMS['BODY_ROI_FILENAME'], type=str, help="ROI of body position")
     parser.add_argument('--plot', default=0, type=int, help="Show visualization in real time")
     parser.add_argument('--distance', default=0, type=int, help="Distance mode: 0 -> normal, 1 -> filter outliers, 2 -> only fingers")
+    parser.add_argument('--proj', default=0, type=int, help="1 -> Use projection over diagonal")
     args = parser.parse_args()
 
     print(team.banner)
@@ -650,7 +679,8 @@ if __name__ == "__main__":
         depth_threshold_max=rois['body']['z'] - PARAMS['BODY_BUFFER'],
         antenna_roi=rois['antenna'],
         show_plot=args.plot,
-        distance=args.distance
+        distance=args.distance,
+        use_projection=args.proj
     )
 
     # Read ROI from file

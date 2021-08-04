@@ -73,6 +73,8 @@ class Ether:
             depth_threshold_max=700,
             depth_threshold_min=400,
             cam_resolution='400',
+            use_projection=0,
+            fps=30,
             synth=None,
             dist_function=None
         ):
@@ -84,6 +86,8 @@ class Ether:
         self.depth_res_w = cam_res[cam_resolution][1]
         self.depth_res_h = cam_res[cam_resolution][2]
         self.depth_stream_name = 'depth'
+        self.depth_fps = fps
+        self.use_projection = use_projection
         # ROI for depth
         self.depth_topx = 1
         self.depth_bottomx = 0
@@ -213,8 +217,10 @@ class Ether:
         # Mono Camera Settings
         mono_l.setResolution(self.depth_mono_resolution_left)
         mono_l.setBoardSocket(dai.CameraBoardSocket.LEFT)
+        mono_l.setFps(self.depth_fps)
         mono_r.setResolution(self.depth_mono_resolution_right)
         mono_r.setBoardSocket(dai.CameraBoardSocket.RIGHT)
+        mono_r.setFps(self.depth_fps)
         # Depth and Output
         stereo = pipeline.createStereoDepth()
         xout_depth = pipeline.createXLinkOut()
@@ -382,13 +388,28 @@ class Ether:
                         points_rh_x = points_rh[0]
                         points_rh_z = points_rh[2]
                         if points_rh_x.size > 0 and points_rh_z.size > 0:
-                            _, _, distance = self.dist_function(points_rh_x, points_rh_z, self.antenna_x, self.antenna_z)
+                            centroid_x, centroid_z, distance = self.dist_function(
+                                points_rh_x, 
+                                points_rh_z, 
+                                self.antenna_x, 
+                                self.antenna_z
+                            )
+
+                            # use projection along the diagonal
+                            if self.use_projection:
+                                if distance is not None:
+                                    _, _, distance = self.func_project_(centroid_x, centroid_z)       
+
                             if distance is not None:
                                 f0 = np.clip(distance, dmin_rh, dmax_rh) - dmin_rh
                                 f0 = 1 - f0 / range_rh
                                 freq = self.synth.scale.from_0_1_to_f(f0)
                                 # send to synth (udp)
                                 self.synth.set_tone(freq)
+
+
+
+                         
 
                     # Left Hand Point cloud (xyz):
                     points_lh = utils.transform_xyz(
@@ -462,6 +483,7 @@ if __name__ == "__main__":
     parser.add_argument("--scport", default=PARAMS['SC_PORT'], type=int,
                         help="Port of Supercollider Server")
     parser.add_argument('--res', default=PARAMS['DEPTH_RESOLUTION'], type=int, help="Depth Resolution used")
+    parser.add_argument('--fps', default=PARAMS['FPS'], type=int, help="Capture FPS")
     parser.add_argument('--antenna', default=PARAMS['ANTENNA_ROI_FILENAME'], type=str, help="ROI of the Theremin antenna")
     parser.add_argument('--body', default=PARAMS['BODY_ROI_FILENAME'], type=str, help="ROI of body position")
     parser.add_argument('--proj', default=0, type=int, help='Use projection')
@@ -524,9 +546,11 @@ if __name__ == "__main__":
     # Depth based Theremin 
     ether = Ether(
         cam_resolution=args.res,
+        fps=args.fps,
         depth_threshold_min=rois['antenna']['z'] + PARAMS['ANTENNA_BUFFER'],
         depth_threshold_max=rois['body']['z'] - PARAMS['BODY_BUFFER'],
-        antenna_roi=rois['antenna']
+        antenna_roi=rois['antenna'],
+        use_projection=args.proj
     )
     # Set the ROI
     ether.set_ROI(roi)
