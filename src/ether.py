@@ -46,11 +46,15 @@ class EtherSynth:
             self,
             scale,
             sc_server,
-            sc_port
+            sc_port,
+            vol_upper_th=0.8,
+            vol_lower_th=0.2
         ):
         self.scale = scale
         self.sc_server = sc_server
         self.sc_port = sc_port
+        self.vol_upper_threshold = vol_upper_th
+        self.vol_lower_threshold = vol_lower_th
         print("> Initializing SC Client at {}:{} <".format(self.sc_server, self.sc_port))
         
     def set_tone(self, frequency):
@@ -60,6 +64,8 @@ class EtherSynth:
 
         
     def set_volume(self, volume):
+        if volume > self.vol_upper_threshold: volume = 1
+        if volume < self.vol_lower_threshold: volume = 0
         print("------> theremin vol: {} <------".format(volume))
         sc_client = udp_client.SimpleUDPClient(self.sc_server, self.sc_port)
         sc_client.send_message("/main/a", volume)
@@ -406,10 +412,7 @@ class Ether:
                                 freq = self.synth.scale.from_0_1_to_f(f0)
                                 # send to synth (udp)
                                 self.synth.set_tone(freq)
-
-
-
-                         
+                    
 
                     # Left Hand Point cloud (xyz):
                     points_lh = utils.transform_xyz(
@@ -474,6 +477,37 @@ def gui(queue, start_flag, stop_flag):
     print("GUI processor")
     pass
     
+class EtherGui:
+    def __init__(self, octaves):
+        self.octaves = octaves
+        self.context_ = {
+            'previous_lh': None,
+            'previous_rh': None,
+            'init_xz': False,
+            'fig_xz': None,
+            'ax_xz': None,
+            'plot_xz': None,
+            'centroid_plot_xz': None,
+            'centroid_plot_xz_f': None,
+            'centroid_plot_xz_fingers': None,
+            'init_yz': False,
+            'fig_yz': None,
+            'ax_yz': None,
+            'plot_yz': None,
+            'centroid_plot_yz': None
+        }
+    
+    def init_context(self):
+        #ht = self.octaves*12
+        #nvectors = np.linspace(0, 1, ht) * diag_distance
+        #notes_ = np.tile(nvectors, 2).reshape((2, -1))
+        #us = np.broadcast_to(vector_u, (ht, 2))
+        #notes = us.T*notes_ + np.broadcast_to(np.array([antenna_x, antenna_z]), (ht, 2)).T
+        pass
+
+    def loop(self, stop_flag):
+        pass
+
 
 if __name__ == "__main__": 
     # Arguments
@@ -488,6 +522,7 @@ if __name__ == "__main__":
     parser.add_argument('--body', default=PARAMS['BODY_ROI_FILENAME'], type=str, help="ROI of body position")
     parser.add_argument('--proj', default=0, type=int, help='Use projection')
     parser.add_argument('--distance', default=0, type=int, help="Distance mode: 0 -> normal, 1 -> filter outliers, 2 -> only fingers") 
+    parser.add_argument('--octaves', default=3, type=int, help="Octaves") 
     args = parser.parse_args()
 
     print(team.banner)
@@ -539,7 +574,7 @@ if __name__ == "__main__":
         dist_func = lambda px, pz, antx, antz: utils.distance_(px, pz, antx, antz)
 
     # Synthesizer
-    scale = eqtmp.EqualTempered(octaves=3, start_freq=220, resolution=100)
+    scale = eqtmp.EqualTempered(octaves=args.octaves, start_freq=220, resolution=1000)
     # Create Synthesizer
     synth = EtherSynth(scale, args.scserver, args.scport)
 
