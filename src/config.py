@@ -46,7 +46,7 @@ PARAMS = {
     'LM_DETECTION_MODEL_PATH': "models/hand_landmark.blob",
     'LM_THRESHOLD': 0.5,
     'LM_INPUT_LENGTH': 224,
-    'FPS': 2,
+    'FPS': 30,
     'ROI_DP_LOWER_TH': 100,
     'ROI_DP_UPPER_TH': 10000,
     'INITIAL_ROI_TL': dai.Point2f(0.4, 0.4),

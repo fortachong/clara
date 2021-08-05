@@ -24,6 +24,7 @@ import threading
 import queue as Queue
 import argparse
 import pickle
+import time
 import utils
 import config
 import team
@@ -399,38 +400,41 @@ class DepthTheremin:
                 while True:
                     self.current_fps.update()
                     # Get frame
-                    in_depth = q_d.get()
-                    self.depth_frame = in_depth.getFrame()
+                    in_depth = q_d.tryGet()
+                    if in_depth is not None:
+                        self.depth_frame = in_depth.getFrame()
 
-                    # Send data to queue (only right hand at the moment)
-                    message = {
-                        'DATA': 1,
-                        'depth': self.depth_frame
-                    }
-                    self.queue.put(message)
+                        # Send data to queue (only right hand at the moment)
+                        message = {
+                            'DATA': 1,
+                            'depth': self.depth_frame
+                        }
+                        self.queue.put(message)
 
-                    # Show depth
-                    instr = "q: quit"
-                    self.show_depth_map(
-                                    instr, 
-                                    topx_rh, 
-                                    topy_rh, 
-                                    bottomx_rh, 
-                                    bottomy_rh,
-                                    topx_lh, 
-                                    topy_lh, 
-                                    bottomx_lh, 
-                                    bottomy_lh
-                                )
+                        # Show depth
+                        instr = "q: quit"
+                        self.show_depth_map(
+                                        instr, 
+                                        topx_rh, 
+                                        topy_rh, 
+                                        bottomx_rh, 
+                                        bottomy_rh,
+                                        topx_lh, 
+                                        topy_lh, 
+                                        bottomx_lh, 
+                                        bottomy_lh
+                                    )
 
-                    # Show threshold image
-                    self.show_depth_map_segmentation(topx_rh, topy_rh, bottomx_rh, bottomy_rh)
-                    
-                    # Commands
-                    key = cv2.waitKey(1) 
-                    if key == ord('q') or key == 27:
-                        # quit
-                        break
+                        # Show threshold image
+                        self.show_depth_map_segmentation(topx_rh, topy_rh, bottomx_rh, bottomy_rh)
+                        
+                        # Commands
+                        key = cv2.waitKey(1) 
+                        if key == ord('q') or key == 27:
+                            # quit
+                            break
+                        
+                        
 
 # Create Synth in supercollider 
 class EtherSynth:
@@ -493,7 +497,7 @@ class SynthMessageProcessor(threading.Thread):
         self.f0__ = 0
 
 
-    # Process a Hand Landmark Message
+    # Process a Message
     def process(self, message):
         # Initial Configuration
         if 'CONFIG' in message:

@@ -69,7 +69,8 @@ if __name__ == "__main__":
     p_there = Process(target=process_, args=(kind, main_queue, START, STOP))
     p_there.start()
     kind = 'synth'
-    p_synth = Process(target=process_, args=(kind, synth_queue, START, STOP))
+    # p_synth = Process(target=process_, args=(kind, synth_queue, START, STOP))
+    p_synth = Process(target=synth_processor, args=(synth_queue, START, STOP))
     p_synth.start()
     kind = 'gui'
     p_gui = Process(target=process_, args=(kind, points_queue, START, STOP))

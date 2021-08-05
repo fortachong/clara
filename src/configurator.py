@@ -13,8 +13,8 @@ Show Configuration: [c]
 Configuration Step 1 - Body Position: [1]
 Configuration Step 2 - Antenna Position: [2]
 Configuration Step 3 - ROIs: [3]
-Data capture: [4]
-Run: [5]
+Data capture (30 fps): [4]
+Run (30 fps): [5]
 Run with Visualization: [6]
 Press [q] to quit
 
