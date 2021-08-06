@@ -466,11 +466,13 @@ class DatasetteHandCapture:
                                 topy, bottomy = np.min(ys)-self.hand_buffer_pixels-by, np.max(ys)+self.hand_buffer_pixels+by
                             else:
                                 bx = dif_xs_ys // 2
-                                topx, bottomx = np.min(xs)-self.hand_buffer_pixels-bx, np.max(xs)+self.hand_buffer_pixels+bx
-                                topy, bottomy = np.min(ys)-self.hand_buffer_pixels, np.max(ys)+self.hand_buffer_pixels
+                                topx, bottomx = np.min(xs)-bx, np.max(xs)+bx
+                                topy, bottomy = np.min(ys), np.max(ys)
+                                topx_b, bottomx_b = topx-self.hand_buffer_pixels, bottomx+self.hand_buffer_pixels
+                                topy_b, bottomy_b = topy-self.hand_buffer_pixels, bottomy+self.hand_buffer_pixels
                     
                             cv2.rectangle(datasette_frame, (topx, topy), (bottomx, bottomy), (255,255,255), 1)
-                            crop_hand = datasette_frame_video[topy:bottomy+1, topx:bottomx+1]
+                            crop_hand = datasette_frame_video[topy_b:bottomy_b+1, topx_b:bottomx_b+1]
                             # pad = abs(crop_hand.shape[0] - crop_hand.shape[1]) // 2
                             datasette_hand = crop_hand.copy()
                             #if crop_hand.shape[0] > crop_hand.shape[1]:
@@ -505,6 +507,11 @@ class DatasetteHandCapture:
                             #self.queue.put(message)
                             if capture_flag:
                                 data = {
+                                    'frame_size': self.frame_size,
+                                    'topx': topx, 
+                                    'bottomx': bottomx,
+                                    'topy': topy,
+                                    'bottomy': bottomy,
                                     'xy': region.lm_xy_normalized,
                                     'xy_y_rescaled': region.lm_xy_y_rescaled,
                                     'hand_img': crop_hand,
