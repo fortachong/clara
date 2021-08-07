@@ -16,10 +16,18 @@ Configuration Step 3 - ROIs: [3]
 Data capture (30 fps): [4]
 Run (30 fps): [5]
 Run with Visualization: [6]
+Data capture (Hand Positions): [h]
 Press [q] to quit
 
 """
-cmds = ['1', '2', '3', '4', '5', '6', 'c', 'i']
+hand_menu = """"
+Valid positions: [0], [1], [2], or [3]
+Press [q] to return to menu
+
+"""
+
+cmds = ['1', '2', '3', '4', '5', '6', 'c', 'i', 'h']
+positions = ['0', '1', '2', '3']
 if __name__ == "__main__":
     print(banner)
     while True:
@@ -70,3 +78,19 @@ if __name__ == "__main__":
         # Visualization
         if cmd == '6':
             subprocess.run("python roi_depth_visualizer.py --plot=1")
+
+        # Data capture
+        if cmd == 'h':
+            # Loop to capture data
+            
+            while True:
+                print(hand_menu)
+                pos = input("Select position to capture: ")
+                if pos == 'q':
+                    break
+
+                if pos not in positions:
+                    print("Invalid position")
+                else:
+                    label = 'P' + pos
+                    subprocess.run(f"python datasette_hand_recorder.py --fps 5 --label {label}")

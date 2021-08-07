@@ -448,13 +448,13 @@ class EtherSynth:
         print("> Initializing SC Client at {}:{} <".format(self.sc_server, self.sc_port))
         
     def set_tone(self, frequency):
-        print("------> theremin freq: {} Hz <------".format(frequency))
+        # print("------> theremin freq: {} Hz <------".format(frequency))
         sc_client = udp_client.SimpleUDPClient(self.sc_server, self.sc_port)
         sc_client.send_message("/main/f", frequency)
 
         
     def set_volume(self, volume):
-        print("------> theremin vol: {} <------".format(volume))
+        # print("------> theremin vol: {} <------".format(volume))
         sc_client = udp_client.SimpleUDPClient(self.sc_server, self.sc_port)
         sc_client.send_message("/main/a", volume)
 
@@ -472,7 +472,8 @@ class SynthMessageProcessor(threading.Thread):
             adjust_dmin=20,
             adjust_dmax=500,
             dist_function=None,
-            use_projection=0
+            use_projection=0,
+            smooth=0
         ):
         threading.Thread.__init__(self)
         self.synth = synth
@@ -492,9 +493,11 @@ class SynthMessageProcessor(threading.Thread):
         # Vol
         self.volume = 0
 
-        # Exp
+        # Exp (to be done)
+        self.smooth = smooth
         self.f0_ = 0
         self.f0__ = 0
+        self.moving_avg_ = lambda x: x
 
 
     # Process a Message
@@ -519,6 +522,9 @@ class SynthMessageProcessor(threading.Thread):
                 return p_proj_u_x, p_proj_u_z, proj_distance
 
             self.func_project_ = vector_projection
+            if self.smooth:
+                self.moving_avg_ = lambda x: (self.f0_ + x) /2
+
             print(self.config)
         # Data message
         if 'DATA' in message:
@@ -557,9 +563,11 @@ class SynthMessageProcessor(threading.Thread):
                             f0 = np.clip(distance, self.dmin, self.dmax) - self.dmin
                             f0 = 1 - f0 / self.range_f
                             # f0 = (self.f0_ + self.f0__ + f0)/3
+                            # f0 = (self.f0_ + f0)/2
+                            f0 = self.moving_avg_(f0)
                             freq = self.scale.from_0_1_to_f(f0)
                             # self.f0__ = self.f0_
-                            # self.f0_ = f0
+                            self.f0_ = f0
                             # send to synth
                             self.synth.set_tone(freq)
 
@@ -612,6 +620,8 @@ if __name__ == "__main__":
     parser.add_argument('--body', default=PARAMS['BODY_ROI_FILENAME'], type=str, help="ROI of body position")
     parser.add_argument('--distance', default=0, type=int, help="Distance mode: 0 -> normal, 1 -> filter outliers, 2 -> only fingers")    
     parser.add_argument('--proj', default=0, type=int, help="1 -> Use projection over diagonal")
+    parser.add_argument('--octaves', default=3, type=int, help="Octaves")
+    parser.add_argument('--smooth', default=0, type=int, help="1 -> Moving average frequency with previous sample")
     args = parser.parse_args()
 
     print(team.banner)
@@ -671,11 +681,11 @@ if __name__ == "__main__":
         else:
             dist_func = lambda px, pz, antx, antz: utils.distance_(px, pz, antx, antz)
 
-        scale = eqtmp.EqualTempered(octaves=3, start_freq=220, resolution=1000)
+        scale = eqtmp.EqualTempered(octaves=args.octaves, start_freq=220, resolution=1000)
         # Create Synthesizer
         synth = EtherSynth(args.scserver, args.scport)
         # Process Thread
-        smp = SynthMessageProcessor(messages, synth, scale, dist_function=dist_func)
+        smp = SynthMessageProcessor(messages, synth, scale, dist_function=dist_func, smooth=args.smooth)
         smp.start()
         # Depth
         the.capture_depth()

@@ -83,6 +83,7 @@ def distance_filter_fingers_(points_x, points_z, antenna_x, antenna_z):
                 centroid_x = np.mean(fingers_xz[0,:])
                 centroid_z = np.mean(fingers_xz[1,:])
                 distance = np.sqrt((centroid_x-antenna_x)**2 + (centroid_z-antenna_z)**2)
+    
     return centroid_x, centroid_z, distance
 
 

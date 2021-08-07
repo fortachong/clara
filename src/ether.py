@@ -56,7 +56,7 @@ class EtherSupercollider:
         print("> Initializing SC Client at {}:{} <".format(self.sc_server, self.sc_port))
         
     def set_tone(self, frequency):
-        print("------> theremin freq: {} Hz <------".format(frequency))
+        # print("------> theremin freq: {} Hz <------".format(frequency))
         sc_client = udp_client.SimpleUDPClient(self.sc_server, self.sc_port)
         sc_client.send_message("/main/f", frequency)
 
@@ -64,7 +64,7 @@ class EtherSupercollider:
     def set_volume(self, volume):
         if volume > self.vol_upper_threshold: volume = 1
         if volume < self.vol_lower_threshold: volume = 0
-        print("------> theremin vol: {} <------".format(volume))
+        # print("------> theremin vol: {} <------".format(volume))
         sc_client = udp_client.SimpleUDPClient(self.sc_server, self.sc_port)
         sc_client.send_message("/main/a", volume)
 
@@ -75,7 +75,8 @@ class EtherSynth:
             supercollider, 
             scale,
             dist_function=None,
-            use_projection=0
+            use_projection=0,
+            smooth=0
         ):
         self.supercollider = supercollider
         self.scale = scale
@@ -84,8 +85,22 @@ class EtherSynth:
         self.use_projection = use_projection
 
         # Try Exp decay
+        self.smooth = smooth
         self.f0_ = 0
         self.f0__ = 0
+        self.moving_avg_ = lambda f: f
+        if self.smooth:
+            self.moving_avg_ = lambda f: (self.f0_ + f)/2
+
+    # Define the projection function:
+    # it project a vector (x, z) over the diagonal
+    def vector_projection(self, x, z, antenna_x, antenna_z, vector_u):
+        vector_p = np.array([x - antenna_x, z - antenna_z])
+        p_proj_u = vector_u*(np.dot(vector_u, vector_p))
+        proj_distance = np.linalg.norm(p_proj_u)
+        p_proj_u_x = p_proj_u[0] + antenna_x
+        p_proj_u_z = p_proj_u[1] + antenna_z
+        return p_proj_u_x, p_proj_u_z, proj_distance
 
     # Process a configuration message
     def config(self, message):
@@ -98,23 +113,11 @@ class EtherSynth:
         self.ymin = self.config_['roi']['left']['y_min']
         self.ymax = self.config_['roi']['left']['y_max']
         self.range_y = self.ymax - self.ymin
-
-        # Define the projection function:
-        # it project a vector (x, z) over the diagonal
-        def vector_projection(x, z):
-            vector_p = np.array([x - self.config_['antenna_x'], z - self.config_['antenna_z']])
-            p_proj_u = self.config_['vector_u']*(np.dot(self.config_['vector_u'], vector_p))
-            proj_distance = np.linalg.norm(p_proj_u)
-            p_proj_u_x = p_proj_u[0] + self.config_['antenna_x']
-            p_proj_u_z = p_proj_u[1] + self.config_['antenna_z']
-            return p_proj_u_x, p_proj_u_z, proj_distance
-
-        self.func_project_ = vector_projection
         print(self.config_)
 
     # Process a depth message
     def process(self, message):
-        if self.config is not None:
+        if self.config_ is not None:
             # Right Hand Point cloud (xyz):
             points_rh = utils.transform_xyz(
                 message['depth'],
@@ -129,44 +132,51 @@ class EtherSynth:
                 PARAMS['INTRINSICS_RIGHT_FX'],
                 PARAMS['INTRINSICS_RIGHT_FY']
             )
-
+            
             if points_rh is not None:
                 # Calculates Centroid (x,y), ignore y
                 # and calculate distance to Antenna center (kind of)
                 points_rh_x = points_rh[0]
                 points_rh_z = points_rh[2]
+                
                 if points_rh_x.size > 0 and points_rh_z.size > 0:
                     centroid_x, centroid_z, distance = self.dist_function(
                         points_rh_x, 
                         points_rh_z, 
-                        self.config['antenna_x'], 
-                        self.config['antenna_z']
+                        self.config_['antenna_x'], 
+                        self.config_['antenna_z']
                     )
-
+                    
                     # use projection along the diagonal
                     if self.use_projection:
                         if distance is not None:
-                            _, _, distance = self.func_project_(centroid_x, centroid_z)
+                            _, _, distance = self.vector_projection(
+                                    centroid_x, centroid_z,
+                                    self.config_['antenna_x'], self.config_['antenna_z'],
+                                    self.config_['roi']['right']['vector_u']
+                                )
 
                     if distance is not None:
                         f0 = np.clip(distance, self.dmin, self.dmax) - self.dmin
                         f0 = 1 - f0 / self.range_f
+                        f0 = self.moving_avg_(f0)
                         # f0 = (self.f0_ + self.f0__ + f0)/3
                         freq = self.scale.from_0_1_to_f(f0)
                         # self.f0__ = self.f0_
-                        # self.f0_ = f0
+                        self.f0_ = f0
                         # send to synth
+                        # print(freq)
                         self.supercollider.set_tone(freq)
 
             # Left Hand Point cloud (xyz):
             points_lh = utils.transform_xyz(
                 message['depth'],
-                self.config['roi']['left']['topx'],
-                self.config['roi']['left']['bottomx'],
-                self.config['roi']['left']['topy'],
-                self.config['roi']['left']['bottomy'],
-                self.config['depth_threshold_min'],
-                self.config['depth_threshold_max'],
+                self.config_['roi']['left']['topx'],
+                self.config_['roi']['left']['bottomx'],
+                self.config_['roi']['left']['topy'],
+                self.config_['roi']['left']['bottomy'],
+                self.config_['depth_threshold_min'],
+                self.config_['depth_threshold_max'],
                 PARAMS['INTRINSICS_RIGHT_CX'],
                 PARAMS['INTRINSICS_RIGHT_CY'],
                 PARAMS['INTRINSICS_RIGHT_FX'],
@@ -193,8 +203,7 @@ class EtherSynth:
 
         # Data message
         if 'DATA' in message:
-            self.process(self, message)
-
+            self.process(message)
 
 
 # Ether: main class implementing the OAKD pipeline for the depth based theremin
@@ -205,7 +214,8 @@ class Ether:
             depth_threshold_max=700,
             depth_threshold_min=400,
             cam_resolution='400',
-            fps=30
+            fps=30,
+            show_fps=0
         ):
         # Camera options = 400, 720, 800
         cam_res = PARAMS['DEPTH_CAMERA_RESOLUTIONS']
@@ -216,6 +226,7 @@ class Ether:
         self.depth_res_h = cam_res[cam_resolution][2]
         self.depth_stream_name = 'depth'
         self.depth_fps = fps
+        self.show_fps = show_fps
         # ROI for depth
         self.depth_topx = 1
         self.depth_bottomx = 0
@@ -518,8 +529,9 @@ class Ether:
                         # quit
                     #    break
 
-                    # Verify fps    
-                    print(self.current_fps.get())
+                    # Verify fps   
+                    if self.show_fps: 
+                        print(self.current_fps.get())
 
                 # cv2.destroyAllWindows()
 
@@ -531,7 +543,8 @@ def process_synth(
         sc_port, 
         octaves, 
         dist_function, 
-        use_projection
+        use_projection,
+        smooth
     ):
     print("Synth processor started...")
     # Create instances for synthesis
@@ -544,7 +557,8 @@ def process_synth(
         supercollider=sc,
         scale=scale,
         dist_function=dist_function,
-        use_projection=use_projection
+        use_projection=use_projection,
+        smooth=smooth
     )
     
     # Process the messages in the queue
@@ -553,9 +567,9 @@ def process_synth(
             if start_flag.value:
                 message = queue.get()
                 if message is not None:
-                    # synth.process_message(message)
+                    synth.process_message(message)
                     # print(type(message))
-                    pass
+                    # pass
 
                 # synth.process_message(message)
             if stop_flag.value:
@@ -576,12 +590,15 @@ def process_gui(queue, start_flag, stop_flag):
                 message = queue.get()
                 if message is not None:
                     # synth.process_message(message)
-                    print(type(message))
+                    # print(type(message))
+                    pass
+
             if stop_flag.value:
                 break                
     except KeyboardInterrupt:
         stop_flag.value = True
-
+    except Exception as error:
+        stop_flag.value = True
 
 
 class EtherGui:
@@ -625,11 +642,13 @@ if __name__ == "__main__":
                         help="Port of Supercollider Server")
     parser.add_argument('--res', default=PARAMS['DEPTH_RESOLUTION'], type=int, help="Depth Resolution used")
     parser.add_argument('--fps', default=PARAMS['FPS'], type=int, help="Capture FPS")
+    parser.add_argument('--show_fps', default=0, type=int, help="Print FPS")
     parser.add_argument('--antenna', default=PARAMS['ANTENNA_ROI_FILENAME'], type=str, help="ROI of the Theremin antenna")
     parser.add_argument('--body', default=PARAMS['BODY_ROI_FILENAME'], type=str, help="ROI of body position")
     parser.add_argument('--proj', default=0, type=int, help='Use projection')
     parser.add_argument('--distance', default=0, type=int, help="Distance mode: 0 -> normal, 1 -> filter outliers, 2 -> only fingers") 
-    parser.add_argument('--octaves', default=3, type=int, help="Octaves") 
+    parser.add_argument('--octaves', default=3, type=int, help="Octaves")
+    parser.add_argument('--smooth', default=0, type=int, help="1 -> Moving average frequency with previous sample")
     args = parser.parse_args()
 
     print(team.banner)
@@ -686,7 +705,8 @@ if __name__ == "__main__":
         fps=args.fps,
         depth_threshold_min=rois['antenna']['z'] + PARAMS['ANTENNA_BUFFER'],
         depth_threshold_max=rois['body']['z'] - PARAMS['BODY_BUFFER'],
-        antenna_roi=rois['antenna']
+        antenna_roi=rois['antenna'],
+        show_fps=args.show_fps
     )
     # Set the ROI
     ether.set_ROI(roi)
@@ -706,20 +726,21 @@ if __name__ == "__main__":
         args=(
             synth_q, START, STOP,
             args.scserver, args.scport, args.octaves,
-            dist_func, args.proj
+            dist_func, args.proj, args.smooth
         )
     )
     synth_.start()
     processes.append(synth_)
-
 
     START.value = True 
     try:
         ether.stream_depth(synth_q, gui_q, STOP)
     except KeyboardInterrupt:
         STOP.value = True
-        cv2.destroyAllWindows()
+    except Exception as error:
+        STOP.value = True
 
+    #cv2.destroyAllWindows()
 
     print("Depth Stream stopped...")
     # join processes

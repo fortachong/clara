@@ -462,8 +462,10 @@ class DatasetteHandCapture:
                             # square crop with a buffer for training
                             if len_xs > len_ys:
                                 by = dif_xs_ys // 2
-                                topx, bottomx = np.min(xs)-self.hand_buffer_pixels, np.max(xs)+self.hand_buffer_pixels
-                                topy, bottomy = np.min(ys)-self.hand_buffer_pixels-by, np.max(ys)+self.hand_buffer_pixels+by
+                                topx, bottomx = np.min(xs), np.max(xs)
+                                topy, bottomy = np.min(ys)-by, np.max(ys)+by
+                                topx_b, bottomx_b = topx-self.hand_buffer_pixels, bottomx+self.hand_buffer_pixels
+                                topy_b, bottomy_b = topy-self.hand_buffer_pixels, bottomy+self.hand_buffer_pixels
                             else:
                                 bx = dif_xs_ys // 2
                                 topx, bottomx = np.min(xs)-bx, np.max(xs)+bx
@@ -519,7 +521,9 @@ class DatasetteHandCapture:
                                 }
                                 temp_capture.append(data)
 
+                instr = f"q: quit | r: start capture | s: save ({self.label})"
                 self.current_fps.display(datasette_frame, orig=(50,50),color=(240,180,100))
+                self.show_instructions(instr, datasette_frame, (50,70), size=0.8)
                 cv2.imshow("Landmarks", datasette_frame)
                 cv2.imshow("Right Hand", datasette_hand)
                 key = cv2.waitKey(1) 
