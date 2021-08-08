@@ -634,6 +634,7 @@ class EtherGui:
 
 
 if __name__ == "__main__": 
+    
     # Arguments
     parser = argparse.ArgumentParser()
     parser.add_argument('--scserver', default="{}".format(PARAMS['SC_SERVER']), type=str, 
