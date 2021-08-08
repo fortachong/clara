@@ -565,7 +565,7 @@ def process_synth(
     try:
         while True:
             if start_flag.value:
-                message = queue.get()
+                message = queue.get(timeout=1)
                 if message is not None:
                     synth.process_message(message)
                     # print(type(message))
@@ -587,7 +587,7 @@ def process_gui(queue, start_flag, stop_flag):
     try:
         while True:
             if start_flag.value:
-                message = queue.get()
+                message = queue.get(timeout=1)
                 if message is not None:
                     # synth.process_message(message)
                     # print(type(message))
