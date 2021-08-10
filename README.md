@@ -130,7 +130,7 @@ python ether.py --fps 100 --distance 2 --proj 1 --scport 57120 --smooth 1 --octa
 ### Requirements
 
 + Depthai v2.5.0.0
-+ Python OSC Library (https://pypi.org/project/python-osc/)[https://pypi.org/project/python-osc/]
++ Python OSC Library [https://pypi.org/project/python-osc/](https://pypi.org/project/python-osc/)
 + Supercollider 
 ---
 
@@ -166,12 +166,12 @@ Tool to show a runing dataset of depth maps. Matplotlib based version.
 Multithreaded version of the theremin simulator.
 
 #### ```ether.py```
-New version of the theremin simulator. It has no interface to reach max framerate. At the moment it crashes sometimes.
+New version of the theremin simulator. It has no interface to reach max framerate. It crashes sometimes.
 
 --- 
 ### Links
-+ Depthai: (https://luxonis.com/depthai)[https://luxonis.com/depthai]
-+ Geaxgx implementation of Mediapipe Hands for depthai: (https://github.com/geaxgx/depthai_hand_tracker)[https://github.com/geaxgx/depthai_hand_tracker]
-+ Geaxgx implementation of Blazepose for depthai: (https://github.com/geaxgx/depthai_blazepose)[https://github.com/geaxgx/depthai_blazepose]
-+ Cortic Technology ASL recognition model: (https://github.com/cortictechnology/hand_asl_recognition)[https://github.com/cortictechnology/hand_asl_recognition]
++ Depthai: [https://luxonis.com/depthai](https://luxonis.com/depthai)
++ Geaxgx implementation of Mediapipe Hands for depthai: [https://github.com/geaxgx/depthai_hand_tracker](https://github.com/geaxgx/depthai_hand_tracker)
++ Geaxgx implementation of Blazepose for depthai: [https://github.com/geaxgx/depthai_blazepose](https://github.com/geaxgx/depthai_blazepose)
++ Cortic Technology ASL recognition model: [https://github.com/cortictechnology/hand_asl_recognition](https://github.com/cortictechnology/hand_asl_recognition)
 
